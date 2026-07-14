@@ -10,10 +10,17 @@
 5. Region: `Northeast Asia (Seoul)` 선택 (지연시간 최소화)
 6. 프로젝트 생성 완료 대기 (1~2분)
 
-## 2. 스키마 적용
-1. Supabase 대시보드 좌측 메뉴 → **SQL Editor**
-2. `New query` → 이 저장소의 `supabase/schema.sql` 파일 내용 전체 복사해서 붙여넣기
-3. `Run` 실행 → 에러 없이 완료되면 좌측 **Table Editor**에서 `deals`, `fetch_cache_status`, `monthly_stats`, `alert_log` 테이블이 보이는지 확인
+## 2. 스키마 적용 (SQL 4개 파일 순서대로)
+Supabase 대시보드 좌측 메뉴 → **SQL Editor** → `New query`에서 아래 4개 파일 내용을 **각각 붙여넣고 `Run`** 하세요. 순서는 무관하지만 4개 모두 적용해야 캐시가 전부 동작합니다(미적용이어도 각 기능은 라이브 폴백으로 동작하나, 매 조회마다 외부 API를 재호출해 느립니다).
+
+| 순서 | 파일 | 생성 테이블 | 용도 |
+|---|---|---|---|
+| 1 | `supabase/schema.sql` | `deals`, `fetch_cache_status`, `monthly_stats`, `alert_log` | 실거래 데이터 본체·통계·알림 로그 |
+| 2 | `supabase/apt_geo.sql` | `apt_geo` | 상세모달 **위치**(좌표·지하철) 캐시 |
+| 3 | `supabase/apt_info.sql` | `apt_info` | 상세모달 **단지정보**(세대수·주차 등) 캐시 |
+| 4 | `supabase/apt_nearby.sql` | `apt_nearby` | 상세모달 **주변시설**(학교) 캐시 |
+
+각 실행이 에러 없이 끝나면 좌측 **Table Editor**에서 위 7개 테이블이 모두 보이는지 확인하세요. (2~4번 파일은 각 파일 상단 주석대로 RLS 공개읽기가 함께 설정됩니다.)
 
 ## 3. API 키 확인
 1. 대시보드 → **Project Settings → API**
