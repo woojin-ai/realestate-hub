@@ -9,6 +9,8 @@ import AptDetailModal from "@/components/AptDetailModal";
 interface DealsTableProps {
   rows: AptStat[] | undefined;
   dealType: DealType;
+  lawdCd: string | null; // 위치 섹션(/api/apt-location) 자연키 — 모달로 전달
+  gu: string;
 }
 
 type SortKey = "name" | "build_year" | "avg_price" | "mom_pct" | "count" | "latest_ym";
@@ -29,7 +31,7 @@ function trendOf(pct: number | null): "up" | "down" | "flat" {
   return "flat";
 }
 
-export default function DealsTable({ rows, dealType }: DealsTableProps) {
+export default function DealsTable({ rows, dealType, lawdCd, gu }: DealsTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("count");
   const [sortAsc, setSortAsc] = useState(false);
   // 평수별 상세 모달: 선택된 row를 통째로 저장(재조회 없음). 상태는 DealsTable이 소유.
@@ -161,7 +163,12 @@ export default function DealsTable({ rows, dealType }: DealsTableProps) {
       </div>
 
       {selected && (
-        <AptDetailModal apt={selected} onClose={() => setSelected(null)} />
+        <AptDetailModal
+          apt={selected}
+          onClose={() => setSelected(null)}
+          lawdCd={lawdCd ?? ""}
+          gu={gu}
+        />
       )}
     </section>
   );

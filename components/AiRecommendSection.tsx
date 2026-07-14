@@ -318,6 +318,8 @@ export default function AiRecommendSection({
         <AptDetailModal
           apt={selected}
           onClose={() => setSelected(null)}
+          lawdCd={lawdCd ?? ""}
+          gu={gu}
           budgetMax={
             lastSubmitted?.budgetType === "max" && lastSubmitted?.budget != null
               ? lastSubmitted.budget

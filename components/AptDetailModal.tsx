@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AptStat } from "@/lib/analyzer";
 import { formatPrice } from "@/lib/analyzer";
 
@@ -12,10 +12,72 @@ interface AptDetailModalProps {
    * "예산 이하"로 하이라이트한다. 없으면(대시보드 DealsTable 경로) 하이라이트 없이 기존과 동일 렌더.
    */
   budgetMax?: number;
+  /**
+   * 시군구코드 5자리·행정구명 — 위치 섹션(/api/apt-location) 조회 자연키(design §14).
+   * 값이 없으면(빈 문자열) 위치 섹션은 크래시 없이 "위치 정보 없음"으로 폴백한다.
+   */
+  lawdCd: string;
+  gu: string;
 }
 
-export default function AptDetailModal({ apt, onClose, budgetMax }: AptDetailModalProps) {
+// 위치 섹션(design §10·§13) 독립 로딩 상태 + 응답 계약(design §14-2).
+type LocState = "loading" | "ok" | "empty" | "error";
+interface LocationData {
+  found: boolean;
+  lat: number | null;
+  lng: number | null;
+  subway_name: string;
+  subway_dist: number;
+}
+
+export default function AptDetailModal({
+  apt,
+  onClose,
+  budgetMax,
+  lawdCd,
+  gu,
+}: AptDetailModalProps) {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+
+  // ── 위치 섹션: 모달 열릴 때 lazy fetch(닫히면 부모 언마운트로 상태 리셋) ──────────
+  const [locState, setLocState] = useState<LocState>("loading");
+  const [loc, setLoc] = useState<LocationData | null>(null);
+  const [locReloadKey, setLocReloadKey] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      lawd_cd: lawdCd,
+      gu,
+      name: apt.name,
+      dong: apt.dong ?? "",
+    });
+    (async () => {
+      try {
+        const res = await fetch(`/api/apt-location?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const json = (await res.json()) as LocationData;
+        const hasSubway = json.subway_name !== "-" && json.subway_dist < 9999;
+        const hasCoord = json.lat != null && json.lng != null;
+        setLoc(json);
+        // 좌표·지하철 모두 미확인이면 빈 상태(자리 유지). 하나라도 있으면 ok.
+        setLocState(hasCoord || hasSubway ? "ok" : "empty");
+      } catch {
+        if (controller.signal.aborted) return; // 언마운트/재요청으로 중단된 경우 무시
+        setLocState("error");
+      }
+    })();
+    return () => controller.abort();
+    // locReloadKey 변경(=[다시 시도])마다 재fetch. loading 표시는 재시도 핸들러에서 선반영.
+  }, [lawdCd, gu, apt.name, apt.dong, locReloadKey]);
+
+  const retryLocation = () => {
+    setLoc(null);
+    setLocState("loading");
+    setLocReloadKey((k) => k + 1);
+  };
 
   // ESC 닫기 + 스크롤 락 + 포커스 이동/복귀 (mount/unmount 생명주기에 묶음)
   useEffect(() => {
@@ -177,6 +239,73 @@ export default function AptDetailModal({ apt, onClose, budgetMax }: AptDetailMod
             </tbody>
           </table>
         </div>
+
+        {/* 구분선 + 위치 섹션(design §9·§10·§13). 평수별 표 아래에 추가. */}
+        <hr className="my-4 border-t border-gray-100" />
+        <section aria-live="polite">
+          <h3 className="text-sm font-bold text-brand-dark mb-2 flex items-center gap-1.5">
+            <span aria-hidden="true">📍</span> 위치
+          </h3>
+
+          {locState === "loading" && (
+            <div>
+              <div className="h-4 w-40 bg-gray-100 rounded animate-pulse" />
+              <span className="sr-only">위치 정보 불러오는 중</span>
+            </div>
+          )}
+
+          {locState === "error" && (
+            <p className="text-sm text-gray-500">
+              위치 정보를 불러오지 못했습니다{" "}
+              <button
+                type="button"
+                onClick={retryLocation}
+                className="text-brand underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand focus-visible:rounded"
+              >
+                다시 시도
+              </button>
+            </p>
+          )}
+
+          {locState === "empty" && (
+            <p className="text-sm text-gray-500">위치 정보를 찾을 수 없습니다</p>
+          )}
+
+          {locState === "ok" && loc && (
+            <div className="text-sm space-y-1">
+              {/* 지하철 줄 */}
+              {loc.subway_name !== "-" && loc.subway_dist < 9999 ? (
+                <p className="flex items-center gap-1.5 text-gray-800">
+                  <span aria-hidden="true">🚇</span>
+                  {loc.subway_name} · 도보{" "}
+                  <span className="text-xs text-brand bg-[#eef] rounded px-1.5 py-0.5">
+                    {loc.subway_dist}m
+                  </span>
+                </p>
+              ) : (
+                <p className="text-gray-500">지하철 정보 없음</p>
+              )}
+
+              {/* 좌표 줄(좌표 있을 때만) + 카카오맵 링크 */}
+              {loc.lat != null && loc.lng != null && (
+                <p className="text-xs text-gray-500">
+                  좌표 {loc.lat.toFixed(4)}, {loc.lng.toFixed(4)}{" "}
+                  <a
+                    href={`https://map.kakao.com/link/map/${encodeURIComponent(
+                      apt.name
+                    )},${loc.lat},${loc.lng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`${apt.name} 위치 카카오맵에서 새 탭으로 열기`}
+                    className="text-brand underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand focus-visible:rounded"
+                  >
+                    지도에서 보기 ↗
+                  </a>
+                </p>
+              )}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

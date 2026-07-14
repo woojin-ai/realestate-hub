@@ -157,7 +157,7 @@ export default function DashboardPage() {
 
             <MonthlyChart monthly={summary?.monthly} dealType={dealType} />
 
-            <DealsTable rows={rows} dealType={dealType} />
+            <DealsTable rows={rows} dealType={dealType} lawdCd={lawdCd} gu={gu} />
 
             <AiRecommendSection
               lawdCd={lawdCd}
