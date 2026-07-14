@@ -48,6 +48,18 @@ interface InfoData {
   park_under: number | null;
 }
 
+// 주변시설 섹션(design §12·§13) 독립 로딩 상태 + 응답 계약(design §14-2 C행).
+type NearbyState = "loading" | "ok" | "empty" | "error";
+interface SchoolEntry {
+  name: string;
+  distance: number;
+}
+interface NearbyData {
+  elementary: SchoolEntry[];
+  middle: SchoolEntry[];
+  high: SchoolEntry[];
+}
+
 export default function AptDetailModal({
   apt,
   onClose,
@@ -144,6 +156,47 @@ export default function AptDetailModal({
     setInfo(null);
     setInfoState("loading");
     setInfoReloadKey((k) => k + 1);
+  };
+
+  // ── 주변시설 섹션: 위치/단지정보와 독립된 병렬 lazy fetch(하나 느려도/실패해도 서로 렌더 안 막음) ──
+  const [nearbyState, setNearbyState] = useState<NearbyState>("loading");
+  const [nearby, setNearby] = useState<NearbyData | null>(null);
+  const [nearbyReloadKey, setNearbyReloadKey] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      lawd_cd: lawdCd,
+      gu,
+      name: apt.name,
+      dong: apt.dong ?? "",
+    });
+    (async () => {
+      try {
+        const res = await fetch(`/api/apt-nearby?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const json = (await res.json()) as NearbyData;
+        // 세 급 모두 0개면 빈 상태. 하나라도 있으면 ok(없는 급은 "반경 1km 내 없음"으로 표기).
+        const hasAny =
+          (json.elementary?.length ?? 0) > 0 ||
+          (json.middle?.length ?? 0) > 0 ||
+          (json.high?.length ?? 0) > 0;
+        setNearby(json);
+        setNearbyState(hasAny ? "ok" : "empty");
+      } catch {
+        if (controller.signal.aborted) return; // 언마운트/재요청으로 중단된 경우 무시
+        setNearbyState("error");
+      }
+    })();
+    return () => controller.abort();
+  }, [lawdCd, gu, apt.name, apt.dong, nearbyReloadKey]);
+
+  const retryNearby = () => {
+    setNearby(null);
+    setNearbyState("loading");
+    setNearbyReloadKey((k) => k + 1);
   };
 
   // ESC 닫기 + 스크롤 락 + 포커스 이동/복귀 (mount/unmount 생명주기에 묶음)
@@ -479,6 +532,80 @@ export default function AptDetailModal({
                 </div>
               )}
             </dl>
+          )}
+        </section>
+
+        {/* 구분선 + 주변시설 섹션(design §12·§13). 단지정보 섹션 아래에 추가. MVP=학교(초/중/고)만. */}
+        <hr className="my-4 border-t border-gray-100" />
+        <section aria-live="polite">
+          <h3 className="text-sm font-bold text-brand-dark mb-2 flex items-center gap-1.5">
+            <span aria-hidden="true">🏫</span> 주변 시설
+          </h3>
+
+          {nearbyState === "loading" && (
+            <div className="space-y-2">
+              <div className="h-4 bg-gray-100 rounded animate-pulse" />
+              <div className="h-4 bg-gray-100 rounded animate-pulse" />
+              <div className="h-4 w-2/3 bg-gray-100 rounded animate-pulse" />
+              <span className="sr-only">주변 시설 불러오는 중</span>
+            </div>
+          )}
+
+          {nearbyState === "error" && (
+            <p className="text-sm text-gray-500">
+              주변 시설을 불러오지 못했습니다{" "}
+              <button
+                type="button"
+                onClick={retryNearby}
+                className="text-brand underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand focus-visible:rounded"
+              >
+                다시 시도
+              </button>
+            </p>
+          )}
+
+          {nearbyState === "empty" && (
+            <p className="text-sm text-gray-500">
+              반경 1km 내 학교 정보가 없습니다
+            </p>
+          )}
+
+          {nearbyState === "ok" && nearby && (
+            <ul>
+              {(
+                [
+                  ["초", nearby.elementary],
+                  ["중", nearby.middle],
+                  ["고", nearby.high],
+                ] as const
+              ).map(([badge, list]) => {
+                const nearest = list && list.length > 0 ? list[0] : null;
+                return (
+                  <li
+                    key={badge}
+                    className="flex items-center gap-2 py-1 text-sm"
+                  >
+                    <span className="text-[0.7rem] font-bold text-brand bg-[#eef] rounded px-1.5 py-0.5 shrink-0">
+                      {badge}
+                    </span>
+                    {nearest ? (
+                      <>
+                        <span className="flex-1 truncate text-gray-800">
+                          {nearest.name}
+                        </span>
+                        <span className="text-xs text-gray-500 shrink-0">
+                          {nearest.distance}m
+                        </span>
+                      </>
+                    ) : (
+                      <span className="flex-1 text-gray-500">
+                        반경 1km 내 없음
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </section>
       </div>
