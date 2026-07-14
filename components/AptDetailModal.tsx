@@ -7,9 +7,14 @@ import { formatPrice } from "@/lib/analyzer";
 interface AptDetailModalProps {
   apt: AptStat; // 표시할 단지(선택된 row). 부모가 selected !== null일 때만 마운트한다.
   onClose: () => void; // ✕ / 오버레이 바깥 / ESC에서 호출
+  /**
+   * 예산(만원, `area_stats[].avg`와 동일 단위). 있으면 `avg <= budgetMax`인 평형 행을
+   * "예산 이하"로 하이라이트한다. 없으면(대시보드 DealsTable 경로) 하이라이트 없이 기존과 동일 렌더.
+   */
+  budgetMax?: number;
 }
 
-export default function AptDetailModal({ apt, onClose }: AptDetailModalProps) {
+export default function AptDetailModal({ apt, onClose, budgetMax }: AptDetailModalProps) {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
   // ESC 닫기 + 스크롤 락 + 포커스 이동/복귀 (mount/unmount 생명주기에 묶음)
@@ -124,9 +129,16 @@ export default function AptDetailModal({ apt, onClose }: AptDetailModalProps) {
                   // 컬럼 5: 퍼센트(total 기준) / 막대 폭(maxCount 기준)
                   const pct = total > 0 ? Math.round((s.count / total) * 100) : 0;
                   const barW = Math.round((s.count / maxCount) * 100);
+                  // 예산 이하 하이라이트(§8 후속): budgetMax 있으면 avg ≤ budgetMax 행을 강조.
+                  const underBudget =
+                    budgetMax != null && s.avg != null && s.avg <= budgetMax;
                   return (
-                    <tr key={s.range}>
-                      <td className="sticky left-0 bg-white px-3 py-2 border-b border-gray-100 whitespace-nowrap">
+                    <tr key={s.range} className={underBudget ? "bg-[#e8f5e9]" : undefined}>
+                      <td
+                        className={`sticky left-0 ${
+                          underBudget ? "bg-[#e8f5e9]" : "bg-white"
+                        } px-3 py-2 border-b border-gray-100 whitespace-nowrap`}
+                      >
                         {s.range}
                       </td>
                       <td className="px-3 py-2 border-b border-gray-100 whitespace-nowrap">
@@ -137,6 +149,11 @@ export default function AptDetailModal({ apt, onClose }: AptDetailModalProps) {
                       </td>
                       <td className="px-3 py-2 border-b border-gray-100 whitespace-nowrap font-semibold">
                         {formatPrice(s.avg)}
+                        {underBudget && (
+                          <span className="text-[0.7rem] text-[#2e7d32] bg-[#e8f5e9] border border-[#a5d6a7] rounded px-1.5 py-0.5 ml-1 whitespace-nowrap">
+                            예산 이하
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 border-b border-gray-100 whitespace-nowrap">
                         {s.count}건

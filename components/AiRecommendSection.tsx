@@ -311,8 +311,20 @@ export default function AiRecommendSection({
         </div>
       )}
 
-      {/* 카드 클릭 → 원본 AptStat로 모달 재사용(§4-C) */}
-      {selected && <AptDetailModal apt={selected} onClose={() => setSelected(null)} />}
+      {/* 카드 클릭 → 원본 AptStat로 모달 재사용(§4-C).
+          예산 하이라이트(§8 후속): 제출된 값 기준, budgetType이 "max"일 때만 예산 전달.
+          min이거나 budget이 null이면 undefined(하이라이트 off). live 편집값이 아닌 lastSubmitted 사용. */}
+      {selected && (
+        <AptDetailModal
+          apt={selected}
+          onClose={() => setSelected(null)}
+          budgetMax={
+            lastSubmitted?.budgetType === "max" && lastSubmitted?.budget != null
+              ? lastSubmitted.budget
+              : undefined
+          }
+        />
+      )}
     </section>
   );
 }
