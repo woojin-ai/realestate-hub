@@ -1,5 +1,5 @@
 // 국토교통부 실거래가 API 호출 모듈
-// 원본: C:\bitcoin_vdcode\realestate\fetcher.py 포팅 (이번 라운드는 아파트 매매/전세만)
+// 원본: C:\bitcoin_vdcode\realestate\fetcher.py 포팅 (아파트/빌라/단독 매매·전월세 지원)
 //
 // ⚠️ 서비스키 이중인코딩 방지: serviceKey를 URL 문자열에 직접 붙여서 호출한다.
 // fetch()에 URLSearchParams/params 객체를 쓰면 이미 인코딩된 서비스키가 다시
@@ -7,14 +7,39 @@
 
 import { XMLParser } from "fast-xml-parser";
 
+// 건물 유형. 순환참조를 피하기 위해(types.ts → analyzer.ts → molit-api.ts 방향 유지)
+// 최하위 모듈인 여기서 정의하고 types.ts에서 재수출한다(중복정의 금지).
+export type BuildingType = "아파트" | "빌라" | "단독";
+
+// 원본 config.py L29-34의 6개 엔드포인트를 그대로 이관.
 const APT_TRADE_URL =
-  "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev";
+  "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"; // 아파트 매매
 const APT_RENT_URL =
-  "http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent";
+  "http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent"; // 아파트 전월세
+const VILA_TRADE_URL =
+  "http://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade"; // 빌라(연립다세대) 매매
+const VILA_RENT_URL =
+  "http://apis.data.go.kr/1613000/RTMSDataSvcRHRent/getRTMSDataSvcRHRent"; // 빌라(연립다세대) 전월세
+const HOUSE_TRADE_URL =
+  "http://apis.data.go.kr/1613000/RTMSDataSvcSHTrade/getRTMSDataSvcSHTrade"; // 단독(단독다가구) 매매
+const HOUSE_RENT_URL =
+  "http://apis.data.go.kr/1613000/RTMSDataSvcSHRent/getRTMSDataSvcSHRent"; // 단독(단독다가구) 전월세
+
+// 원본 fetcher.py의 TRADE_URLS/RENT_URLS 매핑과 동일. building_type으로 URL 선택.
+const TRADE_URLS: Record<BuildingType, string> = {
+  아파트: APT_TRADE_URL,
+  빌라: VILA_TRADE_URL,
+  단독: HOUSE_TRADE_URL,
+};
+const RENT_URLS: Record<BuildingType, string> = {
+  아파트: APT_RENT_URL,
+  빌라: VILA_RENT_URL,
+  단독: HOUSE_RENT_URL,
+};
 
 export interface TradeRecord {
   deal_type: "매매";
-  building_type: "아파트";
+  building_type: BuildingType;
   name: string;
   dong: string;
   price: number;
@@ -28,7 +53,7 @@ export interface TradeRecord {
 
 export interface RentRecord {
   deal_type: "전세" | "월세";
-  building_type: "아파트";
+  building_type: BuildingType;
   name: string;
   dong: string;
   deposit: number;
@@ -88,18 +113,20 @@ function textOf(node: unknown): string {
   return String(node).trim();
 }
 
-/** 아파트 매매 실거래가 조회 (한 달치, 페이지네이션 포함) */
+/** 매매 실거래가 조회 (한 달치, 페이지네이션 포함). buildingType으로 아파트/빌라/단독 구분 */
 export async function fetchTrade(
   lawdCd: string,
-  dealYmd: string
+  dealYmd: string,
+  buildingType: BuildingType = "아파트"
 ): Promise<TradeRecord[]> {
+  const baseUrl = TRADE_URLS[buildingType];
   const results: TradeRecord[] = [];
   let page = 1;
 
   while (true) {
     let text: string;
     try {
-      text = (await callApi(APT_TRADE_URL, lawdCd, dealYmd, page)).trim();
+      text = (await callApi(baseUrl, lawdCd, dealYmd, page)).trim();
     } catch (e) {
       console.error(`[매매 fetch 예외] ${dealYmd} p${page}:`, e);
       break;
@@ -133,16 +160,21 @@ export async function fetchTrade(
 
     for (const item of items) {
       const priceRaw = textOf(item.dealAmount).replace(/,/g, "");
-      const areaRaw = textOf(item.excluUseAr ?? item.area) || "0";
+      // 원본 fetcher.py의 (excluUseAr or area or "0")과 동일하게, 빈 문자열도
+      // fallback되도록 `??`(null/undefined만)가 아니라 `||`로 단계별 폴백한다.
+      // (빌라/단독 API는 excluUseAr 대신 area 필드를 쓰는 경우가 있어 특히 중요)
+      const areaRaw = textOf(item.excluUseAr) || textOf(item.area) || "0";
       const price = Number(priceRaw);
       const area = Number(areaRaw);
       if (!Number.isFinite(price) || !Number.isFinite(area)) continue;
 
-      const name = textOf(item.aptNm);
+      // 이름 필드 fallback: 아파트 aptNm → 빌라 mhouseNm → 단독 houseNm (원본 fetcher.py 동일)
+      const name =
+        textOf(item.aptNm) || textOf(item.mhouseNm) || textOf(item.houseNm);
 
       results.push({
         deal_type: "매매",
-        building_type: "아파트",
+        building_type: buildingType,
         name,
         dong: textOf(item.umdNm),
         price,
@@ -163,18 +195,20 @@ export async function fetchTrade(
   return results;
 }
 
-/** 아파트 전월세 실거래가 조회 (한 달치, 페이지네이션 포함) */
+/** 전월세 실거래가 조회 (한 달치, 페이지네이션 포함). buildingType으로 아파트/빌라/단독 구분 */
 export async function fetchRent(
   lawdCd: string,
-  dealYmd: string
+  dealYmd: string,
+  buildingType: BuildingType = "아파트"
 ): Promise<RentRecord[]> {
+  const baseUrl = RENT_URLS[buildingType];
   const results: RentRecord[] = [];
   let page = 1;
 
   while (true) {
     let text: string;
     try {
-      text = (await callApi(APT_RENT_URL, lawdCd, dealYmd, page)).trim();
+      text = (await callApi(baseUrl, lawdCd, dealYmd, page)).trim();
     } catch (e) {
       console.error(`[전월세 fetch 예외] ${dealYmd} p${page}:`, e);
       break;
@@ -209,7 +243,10 @@ export async function fetchRent(
     for (const item of items) {
       const depositRaw = textOf(item.deposit).replace(/,/g, "");
       const monthlyRaw = textOf(item.monthlyRent).replace(/,/g, "");
-      const areaRaw = textOf(item.excluUseAr ?? item.area) || "0";
+      // 원본 fetcher.py의 (excluUseAr or area or "0")과 동일하게, 빈 문자열도
+      // fallback되도록 `??`(null/undefined만)가 아니라 `||`로 단계별 폴백한다.
+      // (빌라/단독 API는 excluUseAr 대신 area 필드를 쓰는 경우가 있어 특히 중요)
+      const areaRaw = textOf(item.excluUseAr) || textOf(item.area) || "0";
 
       const deposit = depositRaw ? Number(depositRaw) : 0;
       const monthly = monthlyRaw ? Number(monthlyRaw) : 0;
@@ -222,12 +259,14 @@ export async function fetchRent(
         continue;
 
       const rentType: "전세" | "월세" = monthly === 0 ? "전세" : "월세";
-      const name = textOf(item.aptNm);
+      // 이름 필드 fallback: 아파트 aptNm → 빌라 mhouseNm → 단독 houseNm (원본 fetcher.py 동일)
+      const name =
+        textOf(item.aptNm) || textOf(item.mhouseNm) || textOf(item.houseNm);
       const contractType = textOf(item.contractType);
 
       results.push({
         deal_type: rentType,
-        building_type: "아파트",
+        building_type: buildingType,
         name,
         dong: textOf(item.umdNm),
         deposit,
@@ -269,14 +308,15 @@ export interface MonthData {
   월세: RentRecord[];
 }
 
-/** 지정한 월(YYYYMM) 하나의 아파트 매매+전세+월세 데이터를 모두 수집 */
+/** 지정한 월(YYYYMM) 하나의 매매+전세+월세 데이터를 모두 수집(건물유형별) */
 export async function collectMonth(
   lawdCd: string,
-  ym: string
+  ym: string,
+  buildingType: BuildingType = "아파트"
 ): Promise<MonthData> {
   const [trades, rents] = await Promise.all([
-    fetchTrade(lawdCd, ym),
-    fetchRent(lawdCd, ym),
+    fetchTrade(lawdCd, ym, buildingType),
+    fetchRent(lawdCd, ym, buildingType),
   ]);
   const jeonse = rents.filter((r) => r.deal_type === "전세");
   const wolse = rents.filter((r) => r.deal_type === "월세");

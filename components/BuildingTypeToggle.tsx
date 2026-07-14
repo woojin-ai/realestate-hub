@@ -7,8 +7,8 @@ interface BuildingTypeToggleProps {
   onChange: (type: BuildingType) => void;
 }
 
-// 3종 모두 선택 가능하도록 노출한다. 단, 이번 라운드는 아파트만 실제 조회되고
-// 빌라/단독 선택 시 상위 페이지가 "지원 준비 중" 안내를 표시한다(design 문서 준수).
+// 아파트/빌라/단독 3종 모두 실제 조회 지원(마이그레이션 로드맵 2단계 완료).
+// 선택 값은 상위 페이지에서 /api/data?building_type=... 로 전달된다.
 const OPTIONS: { type: BuildingType; label: string }[] = [
   { type: "아파트", label: "🏢 아파트" },
   { type: "빌라", label: "🏘️ 빌라" },

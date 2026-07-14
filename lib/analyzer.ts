@@ -337,6 +337,11 @@ export function buildAptStats(
 ): AptStat[] {
   const nameRecords = new Map<string, (DealRecord & { ym: string })[]>();
 
+  // ⚠️ 빌라/단독도 원본 analyzer.py build_apt_stats와 동일하게 아파트 이름필터
+  //   (isRealApartment) + 면적필터(max<55㎡ 등)가 그대로 적용된다. 따라서 빌라/단독의
+  //   건물별 표(DealsTable)는 상당수가 필터링되어 비어 보일 수 있다. 반면 요약카드/월별
+  //   차트(buildSummary)는 이 필터를 적용하지 않으므로 정상 노출된다. 이는 원본과 동일한
+  //   의도된 동작이며, 유형별 필터 분리는 추후 라운드에서 검토한다(이번 라운드 범위 밖).
   for (const [ym, monthData] of Object.entries(allData)) {
     const records = monthData[dealType] as DealRecord[];
     for (const record of records) {
