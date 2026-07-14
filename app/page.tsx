@@ -91,7 +91,7 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-base md:text-2xl font-bold">부동산 실거래가 대시보드</h1>
           <p className="text-xs md:text-sm opacity-80">
-            국토교통부 공공데이터 기반 아파트·빌라·단독 실거래가 조회
+            국토교통부 공공데이터 기반 아파트 실거래가 조회 (빌라·단독 조회 준비중)
           </p>
         </div>
       </header>
