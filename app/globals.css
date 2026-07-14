@@ -10,6 +10,13 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* 부동산 대시보드 커스텀 컬러 (docs/design/dashboard.md 4번 참고) */
+  --color-brand: #3f51b5;
+  --color-brand-dark: #1a237e;
+  --color-up: #e53935;
+  --color-down: #1e88e5;
+  --color-flat: #888888;
 }
 
 @media (prefers-color-scheme: dark) {
