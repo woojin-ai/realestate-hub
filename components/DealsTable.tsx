@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { AptStat } from "@/lib/analyzer";
 import { formatPrice } from "@/lib/analyzer";
 import type { DealType } from "@/lib/types";
+import AptDetailModal from "@/components/AptDetailModal";
 
 interface DealsTableProps {
   rows: AptStat[] | undefined;
@@ -31,6 +32,19 @@ function trendOf(pct: number | null): "up" | "down" | "flat" {
 export default function DealsTable({ rows, dealType }: DealsTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("count");
   const [sortAsc, setSortAsc] = useState(false);
+  // 평수별 상세 모달: 선택된 row를 통째로 저장(재조회 없음). 상태는 DealsTable이 소유.
+  const [selected, setSelected] = useState<AptStat | null>(null);
+
+  // 매매↔전세 탭 전환 시 열린 모달을 닫는다(이전 탭 수치가 stale로 남는 오인 방지).
+  // 구성안은 useEffect(() => setSelected(null), [dealType]) 를 제시했으나, 이 프로젝트의
+  // eslint 규칙(react-hooks/set-state-in-effect)이 effect 내 setState를 error로 막아 lint
+  // 게이트가 깨진다. 동작(탭 변경 시 모달 닫기)은 동일하게 유지하되, React 공식 문서가
+  // 권장하는 "prop 변경 시 렌더 중 state 조정" 패턴으로 대체한다.
+  const [prevDealType, setPrevDealType] = useState(dealType);
+  if (dealType !== prevDealType) {
+    setPrevDealType(dealType);
+    setSelected(null);
+  }
 
   const sorted = useMemo(() => {
     const list = [...(rows ?? [])];
@@ -101,7 +115,18 @@ export default function DealsTable({ rows, dealType }: DealsTableProps) {
                   return (
                     <tr key={row.name}>
                       <td className="sticky left-0 bg-white px-2 py-2.5 md:px-3 border-b border-gray-100">
-                        <div className="font-medium">{row.name}</div>
+                        <button
+                          type="button"
+                          aria-haspopup="dialog"
+                          aria-label={`${row.name} 평수별 상세 보기`}
+                          onClick={() => setSelected(row)}
+                          className="text-left font-bold text-brand-dark underline decoration-dotted underline-offset-2
+                            hover:text-brand
+                            focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand focus-visible:rounded
+                            min-h-[44px] flex items-center bg-transparent py-1"
+                        >
+                          {row.name}
+                        </button>
                         <div className="text-gray-400 text-[11px]">{row.dong}</div>
                       </td>
                       <td className="px-2 py-2.5 md:px-3 border-b border-gray-100">
@@ -134,6 +159,10 @@ export default function DealsTable({ rows, dealType }: DealsTableProps) {
           </table>
         </div>
       </div>
+
+      {selected && (
+        <AptDetailModal apt={selected} onClose={() => setSelected(null)} />
+      )}
     </section>
   );
 }
