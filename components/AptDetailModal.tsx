@@ -30,6 +30,24 @@ interface LocationData {
   subway_dist: number;
 }
 
+// 단지정보 섹션(design §11·§13) 독립 로딩 상태 + 응답 계약(design §14-2).
+type InfoState = "loading" | "ok" | "empty" | "error";
+interface InfoData {
+  found: boolean;
+  households: number | null;
+  buildings: number | null;
+  hallway: string | null;
+  heating: string | null;
+  park_total: number | null;
+  addr: string | null;
+  far_ratio: string | null;
+  cov_ratio: string | null;
+  elev_pass: number | null;
+  elev_per_hh: number | null;
+  park_above: number | null;
+  park_under: number | null;
+}
+
 export default function AptDetailModal({
   apt,
   onClose,
@@ -77,6 +95,55 @@ export default function AptDetailModal({
     setLoc(null);
     setLocState("loading");
     setLocReloadKey((k) => k + 1);
+  };
+
+  // ── 단지정보 섹션: 위치와 독립된 병렬 lazy fetch(하나 느려도/실패해도 서로 렌더 안 막음) ──
+  const [infoState, setInfoState] = useState<InfoState>("loading");
+  const [info, setInfo] = useState<InfoData | null>(null);
+  const [infoReloadKey, setInfoReloadKey] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      lawd_cd: lawdCd,
+      gu,
+      name: apt.name,
+      dong: apt.dong ?? "",
+    });
+    (async () => {
+      try {
+        const res = await fetch(`/api/apt-info?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const json = (await res.json()) as InfoData;
+        // found:false 또는 모든 표시 필드 null이면 빈 상태(자리 유지). 하나라도 있으면 ok.
+        const hasAny =
+          json.found &&
+          (json.households != null ||
+            json.buildings != null ||
+            json.hallway != null ||
+            json.heating != null ||
+            json.park_total != null ||
+            json.addr != null ||
+            json.elev_pass != null ||
+            json.elev_per_hh != null ||
+            json.far_ratio != null ||
+            json.cov_ratio != null);
+        setInfo(json);
+        setInfoState(hasAny ? "ok" : "empty");
+      } catch {
+        if (controller.signal.aborted) return; // 언마운트/재요청으로 중단된 경우 무시
+        setInfoState("error");
+      }
+    })();
+    return () => controller.abort();
+  }, [lawdCd, gu, apt.name, apt.dong, infoReloadKey]);
+
+  const retryInfo = () => {
+    setInfo(null);
+    setInfoState("loading");
+    setInfoReloadKey((k) => k + 1);
   };
 
   // ESC 닫기 + 스크롤 락 + 포커스 이동/복귀 (mount/unmount 생명주기에 묶음)
@@ -304,6 +371,114 @@ export default function AptDetailModal({
                 </p>
               )}
             </div>
+          )}
+        </section>
+
+        {/* 구분선 + 단지정보 섹션(design §11·§13). 위치 섹션 아래에 추가. */}
+        <hr className="my-4 border-t border-gray-100" />
+        <section aria-live="polite">
+          <h3 className="text-sm font-bold text-brand-dark mb-2 flex items-center gap-1.5">
+            <span aria-hidden="true">🏘</span> 단지 정보
+          </h3>
+
+          {infoState === "loading" && (
+            <div className="space-y-2">
+              <div className="h-4 bg-gray-100 rounded animate-pulse" />
+              <div className="h-4 bg-gray-100 rounded animate-pulse" />
+              <div className="h-4 w-2/3 bg-gray-100 rounded animate-pulse" />
+              <span className="sr-only">단지 정보 불러오는 중</span>
+            </div>
+          )}
+
+          {infoState === "error" && (
+            <p className="text-sm text-gray-500">
+              단지 정보를 불러오지 못했습니다{" "}
+              <button
+                type="button"
+                onClick={retryInfo}
+                className="text-brand underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand focus-visible:rounded"
+              >
+                다시 시도
+              </button>
+            </p>
+          )}
+
+          {infoState === "empty" && (
+            <p className="text-sm text-gray-500">
+              단지 상세 정보가 등록되어 있지 않습니다
+            </p>
+          )}
+
+          {infoState === "ok" && info && (
+            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              {/* MVP6: null 필드는 쌍 자체를 렌더하지 않음(빈 라벨 금지) */}
+              {info.households != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">세대수</dt>
+                  <dd className="font-medium text-gray-800">
+                    {info.households.toLocaleString()}세대
+                  </dd>
+                </div>
+              )}
+              {info.buildings != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">동수</dt>
+                  <dd className="font-medium text-gray-800">{info.buildings}개동</dd>
+                </div>
+              )}
+              {info.hallway != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">복도</dt>
+                  <dd className="font-medium text-gray-800">{info.hallway}</dd>
+                </div>
+              )}
+              {info.heating != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">난방</dt>
+                  <dd className="font-medium text-gray-800">{info.heating}</dd>
+                </div>
+              )}
+              {info.park_total != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">총주차</dt>
+                  <dd className="font-medium text-gray-800">
+                    {info.park_total.toLocaleString()}대
+                  </dd>
+                </div>
+              )}
+              {/* 후순위: 값 있을 때만 행 추가(이번 Stage far/cov는 항상 null이라 자동 숨김) */}
+              {info.elev_pass != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">승강기</dt>
+                  <dd className="font-medium text-gray-800">{info.elev_pass}대</dd>
+                </div>
+              )}
+              {info.elev_per_hh != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">세대당</dt>
+                  <dd className="font-medium text-gray-800">{info.elev_per_hh}대</dd>
+                </div>
+              )}
+              {info.far_ratio != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">용적률</dt>
+                  <dd className="font-medium text-gray-800">{info.far_ratio}%</dd>
+                </div>
+              )}
+              {info.cov_ratio != null && (
+                <div className="flex gap-2">
+                  <dt className="text-gray-500 shrink-0 w-16">건폐율</dt>
+                  <dd className="font-medium text-gray-800">{info.cov_ratio}%</dd>
+                </div>
+              )}
+              {/* 주소는 값이 길어 전체폭(sm:col-span-2) */}
+              {info.addr != null && (
+                <div className="flex gap-2 sm:col-span-2">
+                  <dt className="text-gray-500 shrink-0 w-16">주소</dt>
+                  <dd className="font-medium text-gray-800">{info.addr}</dd>
+                </div>
+              )}
+            </dl>
           )}
         </section>
       </div>
