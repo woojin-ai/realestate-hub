@@ -35,6 +35,7 @@ export interface RecommendResponse {
   filled: number; // 이번 라운드까지 geo가 채워진 후보 수 (진행 배지 N)
   total_candidates: number; // 예산·신축 필터 후 총 후보 수 (진행 배지 M)
   pending: boolean; // 아직 미채움분 남았는지(스켈레톤/더보기 여부)
+  can_live?: boolean; // 라이브 지오코딩 채움 가능 여부(KAKAO 키 존재여부 boolean만; 키값 미노출)
 }
 
 export interface GeoInfo {

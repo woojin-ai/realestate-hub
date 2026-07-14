@@ -22,7 +22,7 @@ interface AiRecommendSectionProps {
 
 type Phase = "collapsed" | "form" | "running" | "result";
 type Weights = { price: number; subway: number; new: number };
-type Progress = { filled: number; total: number; pending: boolean };
+type Progress = { filled: number; total: number; pending: boolean; canLive: boolean };
 type Submitted = { budget: number | null; budgetType: "max" | "min"; year: number };
 
 const CUR_YEAR = new Date().getFullYear();
@@ -136,7 +136,13 @@ export default function AiRecommendSection({
         return;
       }
       setItems(json.items ?? []);
-      setProgress({ filled: json.filled, total: json.total_candidates, pending: json.pending });
+      setProgress({
+        filled: json.filled,
+        total: json.total_candidates,
+        pending: json.pending,
+        // 라우트가 can_live를 안 주는 구버전 호환: 미정의면 true(기존 스켈레톤/더보기 동작 유지).
+        canLive: json.can_live !== false,
+      });
       setLastSubmitted({ budget, budgetType, year });
       setPhase("result");
     } catch {
@@ -189,6 +195,15 @@ export default function AiRecommendSection({
     : Math.min(remaining, 8);
   const showEmpty =
     phase === "result" && !error && items.length === 0 && !(progress?.pending ?? false);
+  // 콜드+라이브불가 고착 가드(§L3): 라이브 채움 불가 + 이번 라운드 채움 0 + 카드 0이면
+  // pending=true라도 스켈레톤/진행배지/더보기 대신 중립 안내를 띄운다(진전 불가).
+  const cannotFill =
+    phase === "result" &&
+    !error &&
+    items.length === 0 &&
+    progress !== null &&
+    progress.canLive === false &&
+    progress.filled === 0;
 
   return (
     <section className="bg-white rounded-xl shadow-sm p-4 md:p-5 mb-5">
@@ -235,8 +250,8 @@ export default function AiRecommendSection({
         </div>
       )}
 
-      {/* 진행 배지(§3-A) — running이거나 result인데 미채움 남은 경우 */}
-      {(running || (phase === "result" && progress?.pending)) && progress !== null && (
+      {/* 진행 배지(§3-A) — running이거나 result인데 미채움 남은 경우(단, 라이브불가 고착은 제외) */}
+      {(running || (phase === "result" && progress?.pending)) && progress !== null && !cannotFill && (
         <div className="mt-4">
           <ProgressBadge filled={progress.filled} total={progress.total} />
         </div>
@@ -251,6 +266,13 @@ export default function AiRecommendSection({
       {showEmpty && (
         <p className="text-center text-flat py-8">
           조건에 맞는 신축 아파트가 없어요. 예산을 높이거나 연도 기준을 낮춰보세요.
+        </p>
+      )}
+
+      {/* 라이브 채움 불가 안내(§L3) — 스켈레톤/더보기 고착 대신 중립 안내 */}
+      {cannotFill && (
+        <p className="text-center text-flat py-8">
+          추천 데이터를 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.
         </p>
       )}
 
@@ -273,8 +295,8 @@ export default function AiRecommendSection({
         </div>
       )}
 
-      {/* 더 불러오기(§3-A) — 미채움분 남았을 때 */}
-      {phase === "result" && progress?.pending && (
+      {/* 더 불러오기(§3-A) — 미채움분 남았을 때(라이브불가 고착은 제외) */}
+      {phase === "result" && progress?.pending && !cannotFill && (
         <div className="mt-4 text-center">
           <p className="text-xs text-gray-400 mb-2">
             아직 채우지 못한 단지가 있어요. 데이터를 더 불러오면 후보가 늘어납니다.

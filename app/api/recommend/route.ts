@@ -108,9 +108,16 @@ export async function GET(request: NextRequest) {
   const budgetMin =
     budgetType === "min" && budgetVal !== null && Number.isFinite(budgetVal) ? budgetVal : null;
 
-  // 신축기준연도(원본 default 2020 → design default 2015; 클라가 항상 전송).
-  const yearParsed = Number(sp.get("year"));
-  const newYear = Number.isFinite(yearParsed) ? yearParsed : 2015;
+  // 신축기준연도. 클라(AiRecommendSection)의 기본값과 동일하게, year가 없거나 빈
+  // 문자열이거나 파싱 불가일 때 (현재연도 - 10)을 폴백으로 쓴다.
+  // (구버전 주석의 "default 2015"는 sp.get("year")==null 시 Number(null)===0 이라
+  //  실제로는 도달 불가한 죽은 코드였으므로 클라 기본값과 통일한다.)
+  const yearRaw = sp.get("year");
+  const yearParsed = Number(yearRaw);
+  const newYear =
+    yearRaw !== null && yearRaw !== "" && Number.isFinite(yearParsed)
+      ? yearParsed
+      : new Date().getFullYear() - 10;
 
   // 가중치(design default 45/35/20). compositeScore가 합으로 정규화하므로 원시값 그대로 사용.
   const num = (v: string | null, d: number) => {
@@ -254,6 +261,9 @@ export async function GET(request: NextRequest) {
     filled: filled.length,
     total_candidates: totalCandidates,
     pending: filled.length < totalCandidates,
+    // 라이브 채움 가능 여부(boolean만; 키값은 로깅/노출하지 않음). 클라가 콜드+라이브불가
+    // (can_live=false && filled=0 && items=0) 상태에서 무한 스켈레톤/더보기 대신 안내를 띄운다.
+    can_live: canLive,
   };
   return NextResponse.json(response);
 }
