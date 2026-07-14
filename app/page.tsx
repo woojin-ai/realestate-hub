@@ -7,6 +7,7 @@ import DealTypeTabs from "@/components/DealTypeTabs";
 import SummaryCards from "@/components/SummaryCards";
 import MonthlyChart from "@/components/MonthlyChart";
 import DealsTable from "@/components/DealsTable";
+import AiRecommendSection from "@/components/AiRecommendSection";
 import type { BuildingType, DealType, DealsApiResponse, DealsApiError } from "@/lib/types";
 
 type FetchStatus = "idle" | "loading" | "ready" | "error";
@@ -157,6 +158,14 @@ export default function DashboardPage() {
             <MonthlyChart monthly={summary?.monthly} dealType={dealType} />
 
             <DealsTable rows={rows} dealType={dealType} />
+
+            <AiRecommendSection
+              lawdCd={lawdCd}
+              gu={gu}
+              dealType={dealType}
+              rows={rows}
+              buildingType={buildingType}
+            />
           </>
         )}
       </div>
