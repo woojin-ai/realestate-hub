@@ -21,26 +21,32 @@ interface AiRecommendSectionProps {
 }
 
 type Phase = "collapsed" | "form" | "running" | "result";
-type Weights = { price: number; subway: number; new: number };
+type Weights = { price: number; subway: number; new: number; slope: number };
 type Progress = { filled: number; total: number; pending: boolean; canLive: boolean };
 type Submitted = {
   budget: number | null;
   budgetType: "max" | "min";
   year: number;
-  flatOnly: boolean;
   minHouseholds: number | null;
 };
 
 const CUR_YEAR = new Date().getFullYear();
-const DEFAULT_WEIGHTS: Weights = { price: 45, subway: 35, new: 20 };
+// 2026-07-15: "⛰ 평지 위주로 보기" 이진 필터 → 4번째 가중치 슬라이더로 전환(원본 app.py w_slope=10 복원).
+const DEFAULT_WEIGHTS: Weights = { price: 45, subway: 35, new: 20, slope: 10 };
 const geoKey = (name: string, dong: string) => `${name}||${dong}`;
 
 function compositeScore(item: RecommendItem, w: Weights): number {
-  const sum = w.price + w.subway + w.new;
+  const sum = w.price + w.subway + w.new + w.slope;
+  const slopeRaw = item.slope_score ?? 0; // 측정불가 시 원본 규약대로 0 대입
   if (sum <= 0)
-    return Math.round((item.price_score + item.subway_score + item.newbuild_score) / 3);
+    return Math.round(
+      (item.price_score + item.subway_score + item.newbuild_score + slopeRaw) / 4
+    );
   return Math.round(
-    (item.price_score * w.price + item.subway_score * w.subway + item.newbuild_score * w.new) /
+    (item.price_score * w.price +
+      item.subway_score * w.subway +
+      item.newbuild_score * w.new +
+      slopeRaw * w.slope) /
       sum
   );
 }
@@ -68,7 +74,6 @@ export default function AiRecommendSection({
   const [budget, setBudget] = useState<number | null>(null); // 만원 단위
   const [budgetType, setBudgetType] = useState<"max" | "min">("max");
   const [year, setYear] = useState<number>(CUR_YEAR - 10);
-  const [flatOnly, setFlatOnly] = useState(false); // "평지 위주로 보기" 필터(2026-07-15)
   const [minHouseholds, setMinHouseholds] = useState<number | null>(null); // "최소 세대수" 필터(2026-07-15)
   const [weights, setWeights] = useState<Weights>(DEFAULT_WEIGHTS);
   const [items, setItems] = useState<RecommendItem[]>([]);
@@ -90,7 +95,6 @@ export default function AiRecommendSection({
     setSelected(null);
     setError(null);
     setLastSubmitted(null);
-    setFlatOnly(false);
     setMinHouseholds(null);
   }
 
@@ -108,13 +112,13 @@ export default function AiRecommendSection({
     return m;
   }, [rows]);
 
-  // 예산/연도/평지선호/최소세대수 변경 감지 → "다시 추천 받기" dirty(§6).
+  // 예산/연도/최소세대수 변경 감지 → "다시 추천 받기" dirty(§6). (평지는 이제 슬라이더라서
+  // sortedItems useMemo가 무호출로 즉시 재정렬하므로 dirty 대상이 아니다.)
   const dirty =
     lastSubmitted !== null &&
     (budget !== lastSubmitted.budget ||
       budgetType !== lastSubmitted.budgetType ||
       year !== lastSubmitted.year ||
-      flatOnly !== lastSubmitted.flatOnly ||
       minHouseholds !== lastSubmitted.minHouseholds);
 
   const patch = (
@@ -123,7 +127,6 @@ export default function AiRecommendSection({
       budgetType: "max" | "min";
       year: number;
       weights: Weights;
-      flatOnly: boolean;
       minHouseholds: number | null;
     }>
   ) => {
@@ -131,7 +134,6 @@ export default function AiRecommendSection({
     if (p.budgetType) setBudgetType(p.budgetType);
     if (typeof p.year === "number") setYear(p.year);
     if (p.weights) setWeights(p.weights);
-    if (typeof p.flatOnly === "boolean") setFlatOnly(p.flatOnly);
     if ("minHouseholds" in p) setMinHouseholds(p.minHouseholds!);
   };
 
@@ -149,7 +151,7 @@ export default function AiRecommendSection({
       w_price: String(weights.price),
       w_subway: String(weights.subway),
       w_new: String(weights.new),
-      flat_only: flatOnly ? "1" : "0",
+      w_slope: String(weights.slope),
       min_households: minHouseholds === null ? "" : String(minHouseholds),
     });
     try {
@@ -168,7 +170,7 @@ export default function AiRecommendSection({
         // 라우트가 can_live를 안 주는 구버전 호환: 미정의면 true(기존 스켈레톤/더보기 동작 유지).
         canLive: json.can_live !== false,
       });
-      setLastSubmitted({ budget, budgetType, year, flatOnly, minHouseholds });
+      setLastSubmitted({ budget, budgetType, year, minHouseholds });
       setPhase("result");
     } catch {
       setError("추천 데이터를 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
@@ -253,7 +255,6 @@ export default function AiRecommendSection({
         budgetType={budgetType}
         year={year}
         weights={weights}
-        flatOnly={flatOnly}
         minHouseholds={minHouseholds}
         dealType={dealType}
         dirty={dirty}

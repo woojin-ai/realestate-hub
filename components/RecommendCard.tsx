@@ -1,4 +1,4 @@
-// 추천 카드 (design §4). 원본 renderRecCards 계승, MVP 범위(평지 막대·카드 내 평수표 없음).
+// 추천 카드 (design §4). 원본 renderRecCards 계승 — 평지 막대 복원(2026-07-15, 원본 색상 #fb8c00).
 "use client";
 
 import { formatPrice } from "@/lib/analyzer";
@@ -7,7 +7,7 @@ import type { RecommendItem } from "@/lib/recommender";
 interface RecommendCardProps {
   rank: number; // 0-based → 메달/N위
   item: RecommendItem;
-  weights: { price: number; subway: number; new: number }; // 종합점수 재계산용(무호출 재정렬)
+  weights: { price: number; subway: number; new: number; slope: number }; // 종합점수 재계산용(무호출 재정렬)
   onClick: () => void; // 부모가 원본 AptStat 찾아 모달 오픈
 }
 
@@ -34,14 +34,17 @@ function ScoreBar({ label, score, color }: { label: string; score: number; color
 
 export default function RecommendCard({ rank, item, weights, onClick }: RecommendCardProps) {
   // 종합점수는 슬라이더 가중치로 실시간 재계산(서버 재호출 없음, design §3-B).
-  const wsum = weights.price + weights.subway + weights.new;
+  // slope_score가 null(고도 데이터 확보 실패)이면 원본 규약대로 0으로 대입해 계산한다.
+  const slopeRaw = item.slope_score ?? 0;
+  const wsum = weights.price + weights.subway + weights.new + weights.slope;
   const total =
     wsum <= 0
-      ? Math.round((item.price_score + item.subway_score + item.newbuild_score) / 3)
+      ? Math.round((item.price_score + item.subway_score + item.newbuild_score + slopeRaw) / 4)
       : Math.round(
           (item.price_score * weights.price +
             item.subway_score * weights.subway +
-            item.newbuild_score * weights.new) /
+            item.newbuild_score * weights.new +
+            slopeRaw * weights.slope) /
             wsum
         );
 
@@ -98,6 +101,14 @@ export default function RecommendCard({ rank, item, weights, onClick }: Recommen
         <ScoreBar label="💰 가격" score={item.price_score} color="#e53935" />
         <ScoreBar label="🚇 역세권" score={item.subway_score} color="#1e88e5" />
         <ScoreBar label="🏗 신축" score={item.newbuild_score} color="#43a047" />
+        {item.slope_score != null ? (
+          <ScoreBar label="⛰ 평지" score={item.slope_score} color="#fb8c00" />
+        ) : (
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs text-gray-500">⛰ 평지</span>
+            <span className="text-xs text-gray-400">측정불가</span>
+          </div>
+        )}
       </div>
     </button>
   );

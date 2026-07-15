@@ -1,4 +1,4 @@
-// AI 맞춤 추천 엔진 — 점수 산식 포팅 (MVP: 가격·역세권·신축 3요소, 평지 제외)
+// AI 맞춤 추천 엔진 — 점수 산식 포팅 (가격·역세권·신축·평지 4요소, 원본 app.py w_slope 복원 2026-07-15)
 //
 // 원본 출처(문자단위 대조 이관):
 //   C:\bitcoin_vdcode\realestate\recommender.py  score_apartments / get_coordinates / get_nearest_subway
@@ -24,7 +24,8 @@ export interface RecommendItem {
   subway_score: number; // 0~100
   newbuild_score: number; // 0~100
   score?: number; // 0~100 (서버가 넣어주는 초기값, 이후 클라가 재계산)
-  // ★ 2026-07-15 추가: "평지 선호" 필터용 원점수. flat_only 미사용 시 조회 생략되어 null.
+  // ★ 2026-07-15: 4번째 가중치("⛰ 평지") 원점수. 항상 계산·포함되며, 고도 데이터 확보
+  //   실패(원본 규약: 유효 고도 <3개) 시에만 null(카드에서 막대 생략/"측정불가" 표시).
   slope_score?: number | null;
   // ★ 2026-07-15 추가: "최소 세대수" 필터용 참고값(apt_info 캐시 히트 시에만 채워짐, 미확인 시 null).
   households?: number | null;
@@ -135,20 +136,25 @@ export function newbuildScore(buildYearRaw: string, newYear: number): number {
 }
 
 /**
- * 종합점수(초기값) — MVP는 3요소만. 원본은 4요소(가격/역세권/신축/평지) 가중합이지만
- * 평지를 제외했으므로 3요소 가중치 합으로 재정규화한다(design §3-B / §7 공식과 동일:
- * score = Σ(wᵢ·raw)/Σwᵢ). 클라이언트도 동일 공식으로 슬라이더 재조정 시 재계산한다.
+ * 종합점수 — 원본 app.py와 동일하게 4요소(가격/역세권/신축/평지) 가중합을 가중치 합으로
+ * 정규화한다(2026-07-15 복원: design §3-B / §7 공식 score = Σ(wᵢ·raw)/Σwᵢ 을 4항으로 확장).
+ * 클라이언트도 동일 공식으로 슬라이더 재조정 시 재계산한다.
  */
 export function compositeScore(
   priceRaw: number,
   subwayRaw: number,
   newRaw: number,
-  weights: { price: number; subway: number; new: number }
+  slopeRaw: number,
+  weights: { price: number; subway: number; new: number; slope: number }
 ): number {
-  const sum = weights.price + weights.subway + weights.new;
-  if (sum <= 0) return Math.round((priceRaw + subwayRaw + newRaw) / 3);
+  const sum = weights.price + weights.subway + weights.new + weights.slope;
+  if (sum <= 0) return Math.round((priceRaw + subwayRaw + newRaw + slopeRaw) / 4);
   return Math.round(
-    (priceRaw * weights.price + subwayRaw * weights.subway + newRaw * weights.new) / sum
+    (priceRaw * weights.price +
+      subwayRaw * weights.subway +
+      newRaw * weights.new +
+      slopeRaw * weights.slope) /
+      sum
   );
 }
 
