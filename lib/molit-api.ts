@@ -37,6 +37,23 @@ const RENT_URLS: Record<BuildingType, string> = {
   단독: HOUSE_RENT_URL,
 };
 
+// 국토부 RTMS 실거래가 API 레거시 시군구코드 팬아웃.
+// 부천시는 2016년 책임읍면동제 전환으로 원미/소사/오정구(자치구)를 폐지했으나, RTMS
+// 실거래가 API는 여전히 폐지 전 자치구 단위 레거시 코드로만 데이터를 제공한다. 통합코드
+// 41190으로 조회하면 resultCode=000(정상)이지만 totalCount=0(빈 응답)이 온다. 따라서
+// 41190 조회 시 세 레거시 구 코드로 각각 조회한 뒤 병합한다. 저장/조회 키는 논리코드
+// 41190 하나로 유지되고(호출부는 41190만 넘김), 이 팬아웃은 fetch 단계 내부에서만 일어난다.
+// (2026-07-16 라이브 확인: DEAL_YMD=202506 기준 41190=0 / 41192(원미)=397 / 41194(소사)=214 / 41196(오정)=73)
+// 매핑에 없는 일반 지역은 자기 자신 단일 코드로 그대로 조회되어 회귀가 없다.
+const LAWD_FANOUT: Record<string, string[]> = {
+  "41190": ["41192", "41194", "41196"],
+};
+
+/** 조회 대상 실제 LAWD_CD 목록. 팬아웃 대상이면 레거시 구 코드들, 아니면 자기 자신 1개. */
+function resolveLawdCodes(lawdCd: string): string[] {
+  return LAWD_FANOUT[lawdCd] ?? [lawdCd];
+}
+
 export interface TradeRecord {
   deal_type: "매매";
   building_type: BuildingType;
@@ -116,11 +133,28 @@ function textOf(node: unknown): string {
   return String(node).trim();
 }
 
-/** 매매 실거래가 조회 (한 달치, 페이지네이션 포함). buildingType으로 아파트/빌라/단독 구분 */
+/** 매매 실거래가 조회 (한 달치, 페이지네이션 포함). buildingType으로 아파트/빌라/단독 구분.
+ * 팬아웃 대상 코드(예: 부천 41190)는 레거시 구 코드별로 각각 조회해 병합한다. */
 export async function fetchTrade(
   lawdCd: string,
   dealYmd: string,
   buildingType: BuildingType = "아파트"
+): Promise<TradeRecord[]> {
+  const codes = resolveLawdCodes(lawdCd);
+  if (codes.length === 1) {
+    return fetchTradeSingle(codes[0], dealYmd, buildingType);
+  }
+  const perCode = await Promise.all(
+    codes.map((code) => fetchTradeSingle(code, dealYmd, buildingType))
+  );
+  return perCode.flat();
+}
+
+/** 단일 LAWD_CD 한 달치 매매 조회(페이지네이션 포함) — fetchTrade의 팬아웃 내부 구현. */
+async function fetchTradeSingle(
+  lawdCd: string,
+  dealYmd: string,
+  buildingType: BuildingType
 ): Promise<TradeRecord[]> {
   const baseUrl = TRADE_URLS[buildingType];
   const results: TradeRecord[] = [];
@@ -198,11 +232,28 @@ export async function fetchTrade(
   return results;
 }
 
-/** 전월세 실거래가 조회 (한 달치, 페이지네이션 포함). buildingType으로 아파트/빌라/단독 구분 */
+/** 전월세 실거래가 조회 (한 달치, 페이지네이션 포함). buildingType으로 아파트/빌라/단독 구분.
+ * 팬아웃 대상 코드(예: 부천 41190)는 레거시 구 코드별로 각각 조회해 병합한다. */
 export async function fetchRent(
   lawdCd: string,
   dealYmd: string,
   buildingType: BuildingType = "아파트"
+): Promise<RentRecord[]> {
+  const codes = resolveLawdCodes(lawdCd);
+  if (codes.length === 1) {
+    return fetchRentSingle(codes[0], dealYmd, buildingType);
+  }
+  const perCode = await Promise.all(
+    codes.map((code) => fetchRentSingle(code, dealYmd, buildingType))
+  );
+  return perCode.flat();
+}
+
+/** 단일 LAWD_CD 한 달치 전월세 조회(페이지네이션 포함) — fetchRent의 팬아웃 내부 구현. */
+async function fetchRentSingle(
+  lawdCd: string,
+  dealYmd: string,
+  buildingType: BuildingType
 ): Promise<RentRecord[]> {
   const baseUrl = RENT_URLS[buildingType];
   const results: RentRecord[] = [];
