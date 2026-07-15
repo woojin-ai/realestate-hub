@@ -45,6 +45,18 @@ export interface GeoInfo {
   subway_dist: number;
 }
 
+// ★ 경사도 복원(2026-07-15) — 원본 recommender.py get_slope_score_vworld/get_route_slope_score
+//   그대로 이관. 함수명은 "vworld"지만 실제로는 VWorld를 호출하지 않고 opentopodata(srtm30m) 우선 →
+//   실패 시 open-elevation.com 폴백으로 고도값을 얻는다(원본 그대로, docs/planning/apt-detail-full-restore.md §0-1).
+export interface RouteSlope {
+  score: number | null; // 유효 고도 <3개면 null(원본: 측정불가)
+  label: string; // 평지/완만/경사/급경사/측정불가
+  elev_diff: number | null; // 역→아파트 고도차(m). +면 오르막
+  elev_range: number | null;
+  elev_start: number | null;
+  elev_end: number | null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 점수 산식 (recommender.py / app.py 그대로 이관)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,4 +246,225 @@ export async function fillGeo(
     await sleep(100); // 원본: time.sleep(0.1)
   }
   return { lat, lng, subway_name: subway.name, subway_dist: subway.distance };
+}
+
+/**
+ * fillGeoDetail — 상세 모달(단건, on-demand 응답)용 좌표+지하철 채움.
+ * 원본 app.py의 /api/location(1454~1470줄, 단건 조회 엔드포인트)은 recommend 배치 루프와 달리
+ * time.sleep 호출이 전혀 없다(sleep은 score_apartments의 다건 순회에서만 레이트리밋 목적으로 존재).
+ * fillGeo()의 sleep(100)×2는 배치 전용이므로, 모달 단건 조회에 그대로 쓰면 원본에 없는 ~200ms
+ * 인위적 지연이 매 콜드조회마다 추가된다 → 상세모달 경로는 이 sleep-free 버전을 쓴다(속도 개선 §3).
+ */
+export async function fillGeoDetail(
+  aptName: string,
+  dong: string,
+  guName: string
+): Promise<GeoInfo> {
+  const { lat, lng } = await getCoordinates(aptName, dong, guName);
+  let subway = { name: "-", distance: 9999 };
+  if (lat && lng) {
+    subway = await getNearestSubway(lat, lng);
+  }
+  return { lat, lng, subway_name: subway.name, subway_dist: subway.distance };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 경사도(고도 기반) — recommender.py get_elevations_batch/get_slope_score_vworld/
+// get_subway_coordinates/get_route_slope_score 그대로 이관.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const OPENTOPODATA_URL = "https://api.opentopodata.org/v1/srtm30m";
+const OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup";
+
+/**
+ * get_elevations_batch — opentopodata(srtm30m) 우선, 실패/전부 null이면 open-elevation.com POST 폴백.
+ * 원본 recommender.py 293~315: 두 소스 모두 timeout=12, 좌표 순서 (lat,lng) 유지.
+ */
+export async function getElevationsBatch(
+  points: Array<{ lat: number; lng: number }>
+): Promise<Array<number | null>> {
+  try {
+    const locStr = points.map((p) => `${p.lat},${p.lng}`).join("|");
+    const res = await fetch(`${OPENTOPODATA_URL}?locations=${locStr}`, {
+      signal: AbortSignal.timeout(12000),
+    });
+    if (res.ok) {
+      const json = (await res.json()) as {
+        results?: Array<{ elevation: number | null }>;
+      };
+      const results = json.results ?? [];
+      const elevations = results.map((r) =>
+        r.elevation != null ? Number(r.elevation) : null
+      );
+      if (elevations.some((e) => e !== null)) return elevations;
+    }
+  } catch {
+    // opentopodata 실패 → open-elevation 폴백(원본 그대로)
+  }
+  try {
+    const locations = points.map((p) => ({ latitude: p.lat, longitude: p.lng }));
+    const res = await fetch(OPEN_ELEVATION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locations }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (res.ok) {
+      const json = (await res.json()) as {
+        results?: Array<{ elevation: number | null }>;
+      };
+      const results = json.results ?? [];
+      const elevations = results.map((r) =>
+        r.elevation != null ? Number(r.elevation) : null
+      );
+      if (elevations.some((e) => e !== null)) return elevations;
+    }
+  } catch {
+    // 두 소스 모두 실패 → 전부 null(호출부가 기본값으로 폴백)
+  }
+  return points.map(() => null);
+}
+
+/**
+ * get_slope_score_vworld — 단지 좌표 주변 5점(중심+상하좌우 delta=0.002) 고도범위 → 평지점수.
+ * 원본 recommender.py 318~330: 유효 고도 <3개면 기본값 50. elev_range<=5:90/<=15:70/<=30:40/else:15.
+ */
+export async function getSlopeScore(lat: number, lng: number): Promise<number> {
+  const delta = 0.002;
+  const points = [
+    { lat, lng },
+    { lat: lat + delta, lng },
+    { lat: lat - delta, lng },
+    { lat, lng: lng + delta },
+    { lat, lng: lng - delta },
+  ];
+  const raw = await getElevationsBatch(points);
+  const elevations = raw.filter((e): e is number => e !== null);
+  if (elevations.length < 3) return 50; // 원본: 데이터 부족 기본값 50점
+  const elevRange = Math.max(...elevations) - Math.min(...elevations);
+  if (elevRange <= 5) return 90;
+  if (elevRange <= 15) return 70;
+  if (elevRange <= 30) return 40;
+  return 15;
+}
+
+/**
+ * get_subway_coordinates — 역명으로 카카오 키워드검색(SW8) → 좌표. 원본 333~352 이관.
+ * 원본은 "역 " 포함 시 그 앞부분, "역임"/"역사거리" 포함 시 첫 단어만 잘라 검색어로 씀.
+ */
+export async function getSubwayCoordinates(
+  subwayName: string
+): Promise<{ lat: number | null; lng: number | null }> {
+  const headers = kakaoHeaders();
+  if (!headers) return { lat: null, lng: null };
+  let cleanName = subwayName;
+  if (subwayName.includes("역 ")) {
+    cleanName = subwayName.slice(0, subwayName.indexOf("역 ") + 1);
+  } else if (subwayName.includes("역임") || subwayName.includes("역사거리")) {
+    cleanName = subwayName.split(/\s+/)[0];
+  }
+  try {
+    const url =
+      `${KAKAO_KEYWORD_URL}?query=${encodeURIComponent(cleanName)}` +
+      `&category_group_code=SW8&size=1`;
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return { lat: null, lng: null };
+    const json = (await res.json()) as { documents?: Array<{ x: string; y: string }> };
+    const docs = json.documents ?? [];
+    if (docs.length > 0) {
+      return { lat: parseFloat(docs[0].y), lng: parseFloat(docs[0].x) };
+    }
+  } catch {
+    // 원본 규약대로 null,null 반환
+  }
+  return { lat: null, lng: null };
+}
+
+/**
+ * get_route_slope_score — 역→아파트 직선을 steps(기본5) 등분한 지점들의 고도로 경로 경사 산출.
+ * 원본 355~374 이관: 유효 고도 <3개면 {score:null,label:"측정불가"}(원본은 score:50이지만
+ * 화면에서 "측정불가"와 함께 50점을 보여주면 오인식 소지가 있어, null로 표기해 UI가 점수를 숨기게 함
+ * — 라벨/색상 로직은 rsScore가 falsy면 회색 처리하는 원본 app.py 1462줄 렌더 규칙과 일치).
+ */
+export async function getRouteSlopeScore(
+  aptLat: number,
+  aptLng: number,
+  subLat: number,
+  subLng: number,
+  steps = 5
+): Promise<RouteSlope> {
+  const points: Array<{ lat: number; lng: number }> = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    points.push({
+      lat: subLat + (aptLat - subLat) * t,
+      lng: subLng + (aptLng - subLng) * t,
+    });
+  }
+  const raw = await getElevationsBatch(points);
+  const elevations = raw.filter((e): e is number => e !== null);
+  if (elevations.length < 3) {
+    return { score: null, label: "측정불가", elev_diff: null, elev_range: null, elev_start: null, elev_end: null };
+  }
+  const elevStart = elevations[0];
+  const elevEnd = elevations[elevations.length - 1];
+  const elevDiff = elevEnd - elevStart;
+  const elevRange = Math.max(...elevations) - Math.min(...elevations);
+  let score: number;
+  let label: string;
+  if (elevRange <= 5) {
+    score = 90;
+    label = "평지";
+  } else if (elevRange <= 15) {
+    score = 70;
+    label = "완만";
+  } else if (elevRange <= 30) {
+    score = 40;
+    label = "경사";
+  } else {
+    score = 15;
+    label = "급경사";
+  }
+  return {
+    score,
+    label,
+    elev_diff: Math.round(elevDiff * 10) / 10,
+    elev_range: Math.round(elevRange * 10) / 10,
+    elev_start: Math.round(elevStart * 10) / 10,
+    elev_end: Math.round(elevEnd * 10) / 10,
+  };
+}
+
+/**
+ * fillSlope — 단지 좌표(+확보된 최근접 지하철명)로 slope_score/route_slope를 함께 채운다.
+ * 속도 개선(§3): 단지 경사도(slope_score)는 지하철 결과와 무관하므로, 지하철역 좌표조회와
+ * "병렬"로 실행한다(원본/이전 순차 구현 대비 대기시간 단축). route_slope는 역 좌표가 있어야
+ * 계산 가능하므로 역좌표 확보 이후에만 이어서 계산한다.
+ */
+export async function fillSlope(
+  aptLat: number,
+  aptLng: number,
+  subwayName: string,
+  subwayDist: number
+): Promise<{ slope_score: number; route_slope: RouteSlope }> {
+  const hasSubway = subwayName !== "-" && subwayDist < 9999;
+
+  const [slopeScore, subwayCoord] = await Promise.all([
+    getSlopeScore(aptLat, aptLng),
+    hasSubway ? getSubwayCoordinates(subwayName) : Promise.resolve({ lat: null, lng: null }),
+  ]);
+
+  let routeSlope: RouteSlope = {
+    score: null,
+    label: "측정불가",
+    elev_diff: null,
+    elev_range: null,
+    elev_start: null,
+    elev_end: null,
+  };
+  if (subwayCoord.lat != null && subwayCoord.lng != null) {
+    routeSlope = await getRouteSlopeScore(aptLat, aptLng, subwayCoord.lat, subwayCoord.lng);
+  }
+
+  return { slope_score: slopeScore, route_slope: routeSlope };
 }

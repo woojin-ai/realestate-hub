@@ -233,7 +233,7 @@ export default function AptDetailModal({ apt, onClose }: AptDetailModalProps) { 
 
 > 근거 문서: `docs/planning/apt-detail-full-restore.md`(2026-07-14 확정 기획안). 이 섹션은 위 §1~§8(평수별 표 = 이미 구현됨)을 **손대지 않고**, 평수별 표 **아래에** 3개 섹션(위치 → 단지정보 → 주변시설)을 추가하는 화면 구성안이다. 개발팀은 이 스펙만 보고 구현할 수 있어야 한다.
 >
-> 전제(기획안 §3·§6): **경사도/평지점수는 제외**(opentopodata 소스 불안정, ai-recommend와 일관). 주변시설 MVP는 **학교만**. 단지정보 용적률·건폐율·승강기는 후순위(null이면 행 숨김). 이는 마스터 확인 대기 항목(기획안 §6-1·§6-2)이며, 본 구성안은 "제외/학교만"을 전제로 그린다.
+> 전제(기획안 §3·§6, **2026-07-15 정정**): 경사도/평지점수는 애초에 "마스터 승인"으로 제외된 적이 없다 — 기획안 §6-1은 "확인 요청"으로만 적혀 있었고, 이후 자동화 라운드가 그 요청에 응답 없이 자체적으로 "제외 확정"처럼 다뤄버린 것이었다. 사용자가 2026-07-15에 "이 사이트의 강점은 경사도 표시"라고 명시적으로 요구해 **경사도(slope_score/route_slope)를 복원**했다(`lib/recommender.ts` getSlopeScore/getRouteSlopeScore/fillSlope, `app/api/apt-location/route.ts`, `components/AptDetailModal.tsx` §10 참고). 주변시설 MVP는 **학교만**(변경 없음). 단지정보 용적률·건폐율·승강기는 후순위(null이면 행 숨김, 변경 없음).
 
 ## 9. 섹션 순서와 모달 전체 골격
 
@@ -280,7 +280,7 @@ export default function AptDetailModal({ apt, onClose }: AptDetailModalProps) { 
 
 ## 10. 섹션 A — 위치 (`/api/apt-location`)
 
-기획안 §1-A. apt_geo 캐시 재활용, 경사도 제외. 표시 필드는 **역명·거리·좌표**뿐.
+기획안 §1-A. apt_geo 캐시 재활용. 표시 필드: **역명·거리·좌표** + **경사도(단지 주변 지형 slope_score, 역→아파트 경로 경사 route_slope)**(2026-07-15 복원, 위 §전제 참고).
 
 ### 레이아웃/카피
 ```

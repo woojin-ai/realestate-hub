@@ -21,13 +21,54 @@ interface AptDetailModalProps {
 }
 
 // 위치 섹션(design §10·§13) 독립 로딩 상태 + 응답 계약(design §14-2).
+// slope_score/route_slope는 2026-07-15 사용자 지시로 복원(원본 app.py 623~631줄 렌더 대응).
 type LocState = "loading" | "ok" | "empty" | "error";
+interface RouteSlope {
+  score: number | null;
+  label: string;
+  elev_diff: number | null;
+  elev_range: number | null;
+  elev_start: number | null;
+  elev_end: number | null;
+}
 interface LocationData {
   found: boolean;
   lat: number | null;
   lng: number | null;
   subway_name: string;
   subway_dist: number;
+  slope_score: number | null;
+  route_slope: RouteSlope | null;
+}
+
+// 원본 app.py 624~630줄과 동일한 임계값(경사도 80/60/40 구간, 색상 그대로).
+function slopeLabelAndColor(score: number): { label: string; color: string } {
+  if (score >= 80) return { label: "평지", color: "#1565c0" };
+  if (score >= 60) return { label: "완만", color: "#388e3c" };
+  if (score >= 40) return { label: "경사", color: "#f57c00" };
+  return { label: "급경사", color: "#c62828" };
+}
+
+// Google Material 스타일 원형 스피너 — 순수 SVG+CSS(animate-spin), 외부 이미지 없음, 브랜드색(#3f51b5).
+function Spinner({ size = 20 }: { size?: number }) {
+  return (
+    <svg
+      className="animate-spin"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="9" stroke="#c5cae9" strokeWidth="3" />
+      <path
+        d="M12 3a9 9 0 0 1 9 9"
+        stroke="#3f51b5"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
 }
 
 // 단지정보 섹션(design §11·§13) 독립 로딩 상태 + 응답 계약(design §14-2).
@@ -368,8 +409,9 @@ export default function AptDetailModal({
           </h3>
 
           {locState === "loading" && (
-            <div>
-              <div className="h-4 w-40 bg-gray-100 rounded animate-pulse" />
+            <div className="flex items-center gap-2 py-1">
+              <Spinner size={18} />
+              <span className="text-sm text-gray-400">불러오는 중…</span>
               <span className="sr-only">위치 정보 불러오는 중</span>
             </div>
           )}
@@ -423,6 +465,86 @@ export default function AptDetailModal({
                   </a>
                 </p>
               )}
+
+              {/* 경사도(단지 주변 지형) — 원본 app.py 790~796줄 대응. 좌표 확보 시에만 계산됨. */}
+              {loc.slope_score != null && (
+                <div className="pt-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-gray-600 flex items-center gap-1">
+                      <span aria-hidden="true">⛰</span> 단지 주변 지형
+                    </span>
+                    <span
+                      className="text-xs font-bold"
+                      style={{ color: slopeLabelAndColor(loc.slope_score).color }}
+                    >
+                      {slopeLabelAndColor(loc.slope_score).label} ({loc.slope_score}점)
+                    </span>
+                  </div>
+                  <div
+                    role="img"
+                    aria-label={`경사도 ${loc.slope_score}점 ${
+                      slopeLabelAndColor(loc.slope_score).label
+                    }`}
+                    className="bg-black/10 rounded h-[7px]"
+                  >
+                    <div
+                      className="h-[7px] rounded transition-[width]"
+                      style={{
+                        width: `${loc.slope_score}%`,
+                        background: slopeLabelAndColor(loc.slope_score).color,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 역→아파트 경로 경사 — 원본 app.py 797~803줄 대응. 지하철 미확인 시 "측정 불가". */}
+              {loc.route_slope && (
+                <div className="pt-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-gray-600 flex items-center gap-1">
+                      <span aria-hidden="true">🚶</span> 역→아파트 경로 경사
+                    </span>
+                    {loc.route_slope.score != null ? (
+                      <span
+                        className="text-xs font-bold"
+                        style={{ color: slopeLabelAndColor(loc.route_slope.score).color }}
+                      >
+                        {loc.route_slope.label}
+                        {loc.route_slope.elev_diff != null &&
+                          (loc.route_slope.elev_diff > 2
+                            ? " ↗오르막"
+                            : loc.route_slope.elev_diff < -2
+                              ? " ↘내리막"
+                              : " →평탄")}{" "}
+                        <span className="font-normal text-gray-400">
+                          {loc.route_slope.elev_diff != null &&
+                            `(고도차 ${loc.route_slope.elev_diff > 0 ? "+" : ""}${
+                              loc.route_slope.elev_diff
+                            }m)`}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">측정 불가</span>
+                    )}
+                  </div>
+                  {loc.route_slope.score != null && (
+                    <div
+                      role="img"
+                      aria-label={`경로 경사 ${loc.route_slope.score}점 ${loc.route_slope.label}`}
+                      className="bg-black/10 rounded h-[7px]"
+                    >
+                      <div
+                        className="h-[7px] rounded transition-[width]"
+                        style={{
+                          width: `${loc.route_slope.score}%`,
+                          background: slopeLabelAndColor(loc.route_slope.score).color,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -435,10 +557,9 @@ export default function AptDetailModal({
           </h3>
 
           {infoState === "loading" && (
-            <div className="space-y-2">
-              <div className="h-4 bg-gray-100 rounded animate-pulse" />
-              <div className="h-4 bg-gray-100 rounded animate-pulse" />
-              <div className="h-4 w-2/3 bg-gray-100 rounded animate-pulse" />
+            <div className="flex items-center gap-2 py-1">
+              <Spinner size={18} />
+              <span className="text-sm text-gray-400">불러오는 중…</span>
               <span className="sr-only">단지 정보 불러오는 중</span>
             </div>
           )}
@@ -543,10 +664,9 @@ export default function AptDetailModal({
           </h3>
 
           {nearbyState === "loading" && (
-            <div className="space-y-2">
-              <div className="h-4 bg-gray-100 rounded animate-pulse" />
-              <div className="h-4 bg-gray-100 rounded animate-pulse" />
-              <div className="h-4 w-2/3 bg-gray-100 rounded animate-pulse" />
+            <div className="flex items-center gap-2 py-1">
+              <Spinner size={18} />
+              <span className="text-sm text-gray-400">불러오는 중…</span>
               <span className="sr-only">주변 시설 불러오는 중</span>
             </div>
           )}

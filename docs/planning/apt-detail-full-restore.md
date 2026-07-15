@@ -29,8 +29,8 @@
 | `subway_name` 최근접 지하철역명 | recommender.get_nearest_subway (카카오 SW8) | **apt_geo 캐시에 이미 있음** → 재조회 0 | ✅ 필수 |
 | `subway_dist` 도보거리(m) | 〃 | **apt_geo 캐시** | ✅ 필수 |
 | `lat`/`lng` 좌표 | get_coordinates (카카오 키워드) | **apt_geo 캐시** (없으면 recommender.ts getCoordinates 라이브) | ✅ 필수(지도/이후확장 근거) |
-| `slope_score` 단지 주변 평지점수 | get_slope_score_vworld (opentopodata) | 신규 포팅 필요 | ❌ 제외(§3) |
-| `route_slope` 역까지 경로 경사 {score,label,elev_diff...} | get_subway_coordinates + get_route_slope_score (opentopodata) | 신규 포팅 필요 | ❌ 제외(§3) |
+| `slope_score` 단지 주변 평지점수 | get_slope_score_vworld (opentopodata) | `lib/recommender.ts` getSlopeScore로 포팅 완료 | ✅ 복원(§3, 2026-07-15) |
+| `route_slope` 역까지 경로 경사 {score,label,elev_diff...} | get_subway_coordinates + get_route_slope_score (opentopodata) | `lib/recommender.ts` getSubwayCoordinates/getRouteSlopeScore로 포팅 완료 | ✅ 복원(§3, 2026-07-15) |
 
 핵심: **위치 섹션의 MVP 표시분(역명·거리·좌표)은 apt_geo에 이미 영속 캐시돼 있어 신규 외부호출이 사실상 0이다.** 가장 싸고 가장 먼저 붙일 섹션. 표시 카피(권장): `🚇 {subway_name} · 도보 {subway_dist}m` (미확인 시 `subway_name==="-" || dist>=9999` → "지하철 정보 없음"). 원본 규약(`-`/`9999`)을 그대로 계승.
 
@@ -120,15 +120,16 @@ apt_nearby (
 
 ---
 
-## 3. 경사도(고도 기반) 포함/제외 — 최종 권고
+## 3. 경사도(고도 기반) 포함/제외 — 2026-07-15 정정: 복원 확정
 
-**권고: MVP·풀버전 모두 상세 모달에서 경사도(slope_score / route_slope) 제외.** 근거 4가지:
-1. **소스 불안정 (사실 정정 §0-1).** opentopodata `srtm30m`은 공개 무료 rate limit(초당 1회·일 1000회급)·간헐 가용성 장애, open-elevation 폴백도 불안정. 이미 `ai-recommend.md`가 이 소스 때문에 평지점수를 MVP에서 뺐다 — 상세 모달도 **같은 결정을 일관 적용**하는 것이 맞다(한 사이트에서 추천은 평지 빼고 모달만 넣으면 정합성·유지보수 혼선).
-2. **모달은 lazy·동기 응답이다.** 추천은 SSE 진행바로 1~2분을 버텼지만, 모달은 클릭 즉시 응답을 기대하는 UI. 고도 배치(단지 5점 + 경로 6점 = 배치 2회, 각 timeout 12s)가 모달 응답에 얹히면 체감 지연이 크고 타임아웃 위험.
-3. **캐싱해도 콜드 채움 비용이 그대로.** 캐시로 재방문은 빨라지나 최초 사용자는 항상 불안정 API를 기다린다. 신뢰 못 할 소스를 첫인상 화면에 두는 것은 리스크.
-4. **정보 가치 대비 리스크 과다.** 위치 섹션 MVP는 역세권(역명·거리)만으로 이미 핵심 가치를 전달. 경사는 부가 정보.
+> **정정 이력**: 이 절은 원래 "MVP·풀버전 모두 제외"를 권고했었다. 그러나 그 권고는 §6-1에 "확인 요청"으로만 남겨뒀을 뿐 실제 사용자 승인을 받은 적이 없었다. 이후 라운드가 이를 마치 확정된 결정처럼 다루며 `app/api/apt-location/route.ts`에 "경사도 필드 없음(마스터 승인, 기획안 §3)"이라는 코멘트를 남겼는데, 이는 사실이 아니었다 — 자동화 라운드 자체 판단이었다. 2026-07-15 사용자가 "이 사이트의 강점은 경사도 표시"라고 명시적으로 지적하며 복원을 지시해 아래 구현으로 **복원 완료**했다. 이전 권고의 우려사항(아래 1~4)은 다음과 같이 해소했다.
 
-대안(만약 사용자가 강하게 원할 경우): 풀버전에서 apt_geo에 `slope_score int` 컬럼을 추가하고 **Cron 배경작업으로만 콜드 채움**(모달 응답 경로에서 절대 라이브 호출 안 함), 값 있으면 표시·없으면 숨김. 이 방식은 `ai-recommend.md` §고도 API 권고와 동일. **단, 이는 별도 트랙이며 이번 복원 범위 밖 — 마스터 확인 필요(§6).**
+1. **소스 불안정 (사실 정정 §0-1)** — opentopodata `srtm30m`(우선) → open-elevation.com(폴백)은 원본과 동일하게 유지. 완화책: `apt_geo`에 `slope_score`/`route_slope` 컬럼을 추가(`supabase/apt_geo_slope.sql`)해 **영속 캐시**하므로, 같은 단지 재조회는 외부 호출 0회. 최초 조회만 불안정 소스에 의존한다.
+2. **모달은 lazy·동기 응답이다** — 완화책: 단지 경사(slope_score)와 역 좌표조회를 `Promise.all`로 병렬 실행(`lib/recommender.ts` `fillSlope`), 상세모달 전용 sleep-free 지오코딩(`fillGeoDetail`)으로 원본에 없던 인위적 지연도 제거해 체감 지연을 최소화했다.
+3. **캐싱해도 콜드 채움 비용이 그대로** — 맞는 우려이나, 이는 "최초 조회 1회의 비용"이며 재방문·타 사용자 재조회는 캐시로 해소된다. 최초 조회 실패 시에도 `slope_score`/`route_slope`는 null로 안전 폴백(500 없음).
+4. **정보 가치 대비 리스크 과다** — 사용자가 직접 "핵심 장점"으로 지목했으므로 이 판단은 더 이상 적용되지 않는다.
+
+구현: `lib/recommender.ts`(`getElevationsBatch`/`getSlopeScore`/`getSubwayCoordinates`/`getRouteSlopeScore`/`fillSlope`, 원본 `get_elevations_batch`/`get_slope_score_vworld`/`get_subway_coordinates`/`get_route_slope_score` 그대로 이관), `supabase/apt_geo_slope.sql`(신규 컬럼, **사용자가 Supabase SQL Editor에서 직접 실행 필요**), `app/api/apt-location/route.ts`(응답에 `slope_score`/`route_slope` 추가 + 캐시 히트/미스/구캐시 보강 3경로), `components/AptDetailModal.tsx`(위치 섹션에 경사도 바 2종 추가, 원본 색상 규칙 그대로: ≥80 평지#1565c0/≥60 완만#388e3c/≥40 경사#f57c00/그 외 급경사#c62828).
 
 ---
 
@@ -138,7 +139,7 @@ apt_nearby (
 
 **권고안: 3개 라우트를 유지하되 카카오/MOLIT를 각각 격리 + 프론트는 병렬 lazy fetch 유지 + 섹션별 독립 로딩/에러.**
 
-- `app/api/apt-location/route.ts` — apt_geo 캐시-우선, 미스 시 recommender.ts로 라이브(경사도 없음). **가장 빠름 → 먼저 뜸.**
+- `app/api/apt-location/route.ts` — apt_geo 캐시-우선, 미스 시 recommender.ts로 라이브(좌표/지하철 + 경사도 slope_score/route_slope 포함, 2026-07-15 복원). **가장 빠름 → 먼저 뜸.**
 - `app/api/apt-info/route.ts` — apt_info 캐시-우선, 미스 시 MOLIT Bass/Dtl(+건축HUB 후순위). kaptCode 목록 로드가 있는 **가장 느린 라우트를 별도 함수로 격리**해, 이게 느려도 location/nearby 섹션 렌더를 막지 않게 한다.
 - `app/api/apt-nearby/route.ts` — apt_nearby 캐시-우선, 미스 시 카카오(MVP: 학교만).
 
@@ -168,7 +169,7 @@ apt_nearby (
 
 ## 6. 범위 밖 / 사용자(마스터) 확인 필요
 
-1. **경사도 복원 여부 — 확인 요청.** 기획 권고는 "제외"(§3, ai-recommend 결정과 일관). 사용자가 원본 화면의 경사/평지 표기를 반드시 원하면 풀버전 Cron 채움 트랙으로 별도 승인 필요. **이 문서는 제외를 전제로 설계했음.**
+1. **경사도 복원 — 완료(2026-07-15).** 이 항목은 원래 "확인 요청"으로 남겨뒀으나 실제 사용자 승인 없이 이후 라운드가 "제외 확정"처럼 다뤘던 것이 문제였다. 사용자가 명시적으로 복원을 지시해 §3에 정리한 대로 구현 완료.
 2. **주변시설 전체 vs 학교만 — 확인 요청.** MVP를 학교로 좁힌 이유는 카카오 16~19콜/모달(§0-2) 부담. 병원·편의시설까지 즉시 원하면 쿼터·응답시간 리스크 명시하고 2차 일정으로 넣거나 캐시 선워밍 필요.
 3. **로컬 검증 가능성 — 프로덕션 env 블로커와 무관.** 세 섹션 모두 외부 키(`MOLIT API_KEY`, `BLDRGST_KEY`, `KAKAO_API_KEY`)가 `.env.local`에 있으면 **로컬에서 완전 검증 가능**하며, Vercel 환경변수 미적용(프로덕션 블로커)과 독립이다. Supabase 캐시가 없어도 라이브 폴백으로 동작하므로(apt_geo 패턴) 캐시 테이블 미적용 상태에서도 기능 검증은 된다. 단 **캐시 성능/타임아웃 격리 효과는 프로덕션(Supabase 적용) 조건에서만 실측 가능** → 캐시 스키마 3종(apt_info/apt_nearby, apt_geo는 기존)의 Supabase 적용은 사용자 몫.
 4. **사용자 우선순위 재확인 — 경미하지만 명시.** 복원 ①이 상세보기임은 확정. 다만 "MVP를 위치+단지정보(핵심6)+학교로 먼저 릴리스하고 나머지는 2차"라는 단계 축소를 사용자가 수용하는지 1회 확인 권고(원본과 즉시 100% 동일을 원하면 3단계+후순위를 한 번에 요구할 수 있음 → 그 경우 카카오/고도 리스크를 다시 고지).

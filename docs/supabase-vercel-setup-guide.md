@@ -19,8 +19,9 @@ Supabase 대시보드 좌측 메뉴 → **SQL Editor** → `New query`에서 아
 | 2 | `supabase/apt_geo.sql` | `apt_geo` | 상세모달 **위치**(좌표·지하철) 캐시 |
 | 3 | `supabase/apt_info.sql` | `apt_info` | 상세모달 **단지정보**(세대수·주차 등) 캐시 |
 | 4 | `supabase/apt_nearby.sql` | `apt_nearby` | 상세모달 **주변시설**(학교) 캐시 |
+| 5 | `supabase/apt_geo_slope.sql` | `apt_geo`에 컬럼 추가(`slope_score`, `route_slope`) | 상세모달 **경사도**(2번 적용 후에 실행) 캐시 |
 
-각 실행이 에러 없이 끝나면 좌측 **Table Editor**에서 위 7개 테이블이 모두 보이는지 확인하세요. (2~4번 파일은 각 파일 상단 주석대로 RLS 공개읽기가 함께 설정됩니다.)
+각 실행이 에러 없이 끝나면 좌측 **Table Editor**에서 위 7개 테이블이 모두 보이는지 확인하세요. (2~4번 파일은 각 파일 상단 주석대로 RLS 공개읽기가 함께 설정됩니다.) **5번은 2번(`apt_geo`) 적용 이후에만 실행 가능**(기존 테이블에 컬럼을 추가하는 `alter table`이라 순서가 중요합니다). 5번을 아직 실행하지 않아도 경사도 기능은 매번 라이브로 재계산되어 동작하지만(느려짐), 캐시가 없으면 재방문해도 opentopodata/open-elevation을 다시 호출합니다.
 
 ## 3. API 키 확인
 1. 대시보드 → **Project Settings → API**
