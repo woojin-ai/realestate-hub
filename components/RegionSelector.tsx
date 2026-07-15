@@ -14,7 +14,7 @@ const sidoNames = Object.keys(REGION_CODES).sort((a, b) => a.localeCompare(b, "k
 
 export default function RegionSelector({ sido, gu, onChange }: RegionSelectorProps) {
   const guMap = sido ? REGION_CODES[sido]?.구 ?? {} : {};
-  const guNames = Object.keys(guMap);
+  const guNames = Object.keys(guMap).sort((a, b) => a.localeCompare(b, "ko"));
 
   return (
     <div className="flex flex-col md:flex-row gap-3 mb-3">
