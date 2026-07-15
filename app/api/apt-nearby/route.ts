@@ -9,7 +9,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { getCoordinates } from "@/lib/recommender";
-import { fetchNearbySchools, type NearbySchools } from "@/lib/kakao-nearby";
+import { fetchNearbyAll, type NearbyAll } from "@/lib/kakao-nearby";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,8 +17,18 @@ export const runtime = "nodejs";
 // 주변시설 장기 캐시 TTL: 90일 이내면 payload 재사용, 초과면 미스로 보고 라이브 재조회(기획안 §2-C).
 const NEARBY_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
-// 프론트가 소비하는 응답 계약(design §14-2 C행). 후순위 키(병원·편의시설 등)는 이번 Stage에서 없음.
-const EMPTY: NearbySchools = { elementary: [], middle: [], high: [] };
+// 프론트가 소비하는 응답 계약(design §14-2 C행, 2026-07-15 전면 확장:
+// 학교+어린이집+대형병원+동물병원+편의시설).
+const EMPTY: NearbyAll = {
+  elementary: [],
+  middle: [],
+  high: [],
+  daycare_public: 0,
+  daycare_private: 0,
+  big_hospital: { name: "-", distance: 9999, address: "" },
+  vet_hospital: { name: "-", distance: 9999 },
+  convenience: { supermarket: 0, convenience: 0, cafe: 0, restaurant: 0, pharmacy: 0, bank: 0 },
+};
 
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams;
@@ -104,10 +114,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(EMPTY);
     }
 
-    // ── 카카오 학교 조회(SC4 1콜 + 급별 keyword 폴백 최대 3콜) ──────────────────
-    const schools = await fetchNearbySchools(lat, lng);
-    await upsertRow(supabase, lawdCd, name, dong, schools);
-    return NextResponse.json(schools);
+    // ── 카카오 주변시설 조회(학교+어린이집+대형병원+동물병원+편의시설, 병렬) ──────────
+    const nearby = await fetchNearbyAll(lat, lng);
+    await upsertRow(supabase, lawdCd, name, dong, nearby);
+    return NextResponse.json(nearby);
   } catch (err) {
     console.error("[apt-nearby: 라이브 조회 실패, 빈 결과 폴백]", err);
     return NextResponse.json(EMPTY);
@@ -120,7 +130,7 @@ async function upsertRow(
   lawdCd: string,
   name: string,
   dong: string,
-  payload: NearbySchools
+  payload: NearbyAll
 ): Promise<void> {
   if (!supabase) return;
   try {

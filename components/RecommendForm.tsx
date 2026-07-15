@@ -10,14 +10,18 @@ interface RecommendFormProps {
   budgetType: "max" | "min";
   year: number;
   weights: Weights;
+  flatOnly: boolean; // "평지 위주로 보기" 필터(2026-07-15)
+  minHouseholds: number | null; // "최소 세대수" 필터(2026-07-15)
   dealType: DealType; // "현재 매매 기준" 라벨용
-  dirty: boolean; // 예산·연도 변경 시 "다시 추천 받기"
+  dirty: boolean; // 예산·연도·필터 변경 시 "다시 추천 받기"
   onChange: (
     patch: Partial<{
       budget: number | null;
       budgetType: "max" | "min";
       year: number;
       weights: Weights;
+      flatOnly: boolean;
+      minHouseholds: number | null;
     }>
   ) => void;
   onSubmit: () => void;
@@ -37,6 +41,8 @@ export default function RecommendForm({
   budgetType,
   year,
   weights,
+  flatOnly,
+  minHouseholds,
   dealType,
   dirty,
   onChange,
@@ -103,6 +109,38 @@ export default function RecommendForm({
       <p className="mt-2 text-xs text-gray-400">
         현재 &lsquo;{dealType}&rsquo; 기준으로 추천합니다.
       </p>
+
+      {/* 평지 선호 + 최소 세대수 필터(2026-07-15 추가) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+        <label className="flex items-center gap-2 text-sm text-gray-600 rounded-lg border border-[#e0e4f0] px-3 py-2 min-h-[44px]">
+          <input
+            type="checkbox"
+            checked={flatOnly}
+            onChange={(e) => onChange({ flatOnly: e.target.checked })}
+            className="h-4 w-4 accent-[#3f51b5]"
+          />
+          <span>⛰ 평지 위주로 보기</span>
+          <span className="text-xs text-gray-400">(경사 심한 단지 제외)</span>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm text-gray-600">
+          최소 세대수
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={100}
+            value={minHouseholds ?? ""}
+            placeholder="예: 500 (미입력 시 전체)"
+            onChange={(e) => {
+              const v = e.target.value;
+              const n = parseInt(v, 10);
+              onChange({ minHouseholds: v.trim() === "" || !Number.isFinite(n) ? null : n });
+            }}
+            className="rounded-lg border border-[#e0e4f0] px-3 py-2 text-sm min-h-[44px]"
+          />
+        </label>
+      </div>
 
       {/* 가중치 슬라이더 3종 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">

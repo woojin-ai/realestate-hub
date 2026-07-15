@@ -8,7 +8,9 @@ interface RegionSelectorProps {
   onChange: (sido: string, gu: string, lawdCd: string | null) => void;
 }
 
-const sidoNames = Object.keys(REGION_CODES);
+// lib/regions.ts의 REGION_CODES 키 순서는 원본(인구순)을 그대로 유지해야 하므로
+// (다른 로직이 원본 순서에 의존할 수 있음) 렌더링 시에만 가나다순으로 정렬한다.
+const sidoNames = Object.keys(REGION_CODES).sort((a, b) => a.localeCompare(b, "ko"));
 
 export default function RegionSelector({ sido, gu, onChange }: RegionSelectorProps) {
   const guMap = sido ? REGION_CODES[sido]?.구 ?? {} : {};

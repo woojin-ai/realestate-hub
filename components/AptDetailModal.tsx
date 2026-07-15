@@ -89,17 +89,50 @@ interface InfoData {
   park_under: number | null;
 }
 
-// 주변시설 섹션(design §12·§13) 독립 로딩 상태 + 응답 계약(design §14-2 C행).
+// 주변시설 섹션(design §12·§13) 독립 로딩 상태 + 응답 계약(design §14-2 C행,
+// 2026-07-15 전면 확장: 학교+어린이집+대형병원+동물병원+편의시설).
 type NearbyState = "loading" | "ok" | "empty" | "error";
 interface SchoolEntry {
   name: string;
   distance: number;
 }
+interface BigHospital {
+  name: string;
+  distance: number;
+  address: string;
+}
+interface VetHospital {
+  name: string;
+  distance: number;
+}
+interface ConvenienceCounts {
+  supermarket: number;
+  convenience: number;
+  cafe: number;
+  restaurant: number;
+  pharmacy: number;
+  bank: number;
+}
 interface NearbyData {
   elementary: SchoolEntry[];
   middle: SchoolEntry[];
   high: SchoolEntry[];
+  daycare_public: number;
+  daycare_private: number;
+  big_hospital: BigHospital;
+  vet_hospital: VetHospital;
+  convenience: ConvenienceCounts;
 }
+
+// 편의시설 그리드 표시 순서/아이콘/라벨(원본 app.py 렌더 순서: 편의점→마트→카페→음식점→약국→은행).
+const CONVENIENCE_ITEMS: Array<{ key: keyof ConvenienceCounts; icon: string; label: string }> = [
+  { key: "convenience", icon: "🏪", label: "편의점" },
+  { key: "supermarket", icon: "🏬", label: "마트" },
+  { key: "cafe", icon: "☕", label: "카페" },
+  { key: "restaurant", icon: "🍽", label: "음식점" },
+  { key: "pharmacy", icon: "💊", label: "약국" },
+  { key: "bank", icon: "🏦", label: "은행" },
+];
 
 export default function AptDetailModal({
   apt,
@@ -219,11 +252,19 @@ export default function AptDetailModal({
         });
         if (!res.ok) throw new Error(`status ${res.status}`);
         const json = (await res.json()) as NearbyData;
-        // 세 급 모두 0개면 빈 상태. 하나라도 있으면 ok(없는 급은 "반경 1km 내 없음"으로 표기).
+        // 학교/어린이집/대형병원/동물병원/편의시설 중 하나라도 있으면 ok
+        // (없는 항목은 각각 "반경 내 없음"/0개로 표기).
+        const conv = json.convenience;
         const hasAny =
           (json.elementary?.length ?? 0) > 0 ||
           (json.middle?.length ?? 0) > 0 ||
-          (json.high?.length ?? 0) > 0;
+          (json.high?.length ?? 0) > 0 ||
+          (json.daycare_public ?? 0) > 0 ||
+          (json.daycare_private ?? 0) > 0 ||
+          (json.big_hospital && json.big_hospital.distance < 9999) ||
+          (json.vet_hospital && json.vet_hospital.distance < 9999) ||
+          (!!conv &&
+            (conv.supermarket + conv.convenience + conv.cafe + conv.restaurant + conv.pharmacy + conv.bank) > 0);
         setNearby(json);
         setNearbyState(hasAny ? "ok" : "empty");
       } catch {
@@ -297,18 +338,22 @@ export default function AptDetailModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="bg-white rounded-2xl shadow-2xl w-[calc(100%-2rem)] max-w-[560px] max-h-[85vh] md:max-h-[80vh] overflow-y-auto relative p-4 md:p-7"
+        className="bg-white rounded-2xl shadow-2xl w-[calc(100%-2rem)] max-w-[560px] max-h-[85vh] md:max-h-[80vh] relative flex flex-col overflow-hidden"
       >
+        {/* 닫기 버튼: 스크롤 컨테이너 바깥(이 relative wrapper 기준)에 고정 배치 —
+            모달 내부를 스크롤해도 항상 우상단에 보이도록 함(스크롤 영역과 분리). */}
         <button
           ref={closeBtnRef}
           type="button"
           aria-label="닫기"
           onClick={onClose}
-          className="absolute top-2.5 right-2.5 w-11 h-11 flex items-center justify-center text-2xl text-gray-400 hover:text-gray-600 leading-none"
+          className="absolute top-2.5 right-2.5 z-30 w-11 h-11 flex items-center justify-center text-2xl text-gray-400 hover:text-gray-600 leading-none bg-white/80 rounded-full"
         >
           ✕
         </button>
 
+        {/* 스크롤 가능 영역: 헤더~본문 전부 여기 안에서만 스크롤(닫기 버튼은 밖에 고정) */}
+        <div className="overflow-y-auto p-4 md:p-7">
         {/* 헤더: 타이틀 + meta */}
         <h2 id={titleId} className="text-lg font-bold text-brand-dark mb-1 pr-10">
           🏢 {apt.name} — 평수별 실거래가
@@ -686,48 +731,119 @@ export default function AptDetailModal({
 
           {nearbyState === "empty" && (
             <p className="text-sm text-gray-500">
-              반경 1km 내 학교 정보가 없습니다
+              반경 내 주변시설 정보가 없습니다
             </p>
           )}
 
           {nearbyState === "ok" && nearby && (
-            <ul>
-              {(
-                [
-                  ["초", nearby.elementary],
-                  ["중", nearby.middle],
-                  ["고", nearby.high],
-                ] as const
-              ).map(([badge, list]) => {
-                const nearest = list && list.length > 0 ? list[0] : null;
-                return (
-                  <li
-                    key={badge}
-                    className="flex items-center gap-2 py-1 text-sm"
-                  >
-                    <span className="text-[0.7rem] font-bold text-brand bg-[#eef] rounded px-1.5 py-0.5 shrink-0">
-                      {badge}
-                    </span>
-                    {nearest ? (
-                      <>
-                        <span className="flex-1 truncate text-gray-800">
-                          {nearest.name}
-                        </span>
-                        <span className="text-xs text-gray-500 shrink-0">
-                          {nearest.distance}m
-                        </span>
-                      </>
-                    ) : (
-                      <span className="flex-1 text-gray-500">
-                        반경 1km 내 없음
+            <div className="space-y-3">
+              {/* 학교(초/중/고) — 각 급 최근접 1건 */}
+              <ul>
+                {(
+                  [
+                    ["초", nearby.elementary],
+                    ["중", nearby.middle],
+                    ["고", nearby.high],
+                  ] as const
+                ).map(([badge, list]) => {
+                  const nearest = list && list.length > 0 ? list[0] : null;
+                  return (
+                    <li
+                      key={badge}
+                      className="flex items-center gap-2 py-1 text-sm"
+                    >
+                      <span className="text-[0.7rem] font-bold text-brand bg-[#eef] rounded px-1.5 py-0.5 shrink-0">
+                        {badge}
                       </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+                      {nearest ? (
+                        <>
+                          <span className="flex-1 truncate text-gray-800">
+                            {nearest.name}
+                          </span>
+                          <span className="text-xs text-gray-500 shrink-0">
+                            {nearest.distance}m
+                          </span>
+                        </>
+                      ) : (
+                        <span className="flex-1 text-gray-500">
+                          반경 1km 내 없음
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {/* 어린이집(반경 500m, 국공립/사립 개수) — 원본 app.py 어린이집 라인 대응 */}
+              {(nearby.daycare_public > 0 || nearby.daycare_private > 0) && (
+                <p className="flex items-center gap-2 text-sm text-gray-800">
+                  <span className="text-[0.7rem] font-bold text-brand bg-[#eef] rounded px-1.5 py-0.5 shrink-0">
+                    🧸
+                  </span>
+                  <span className="flex-1">
+                    어린이집 국공립 {nearby.daycare_public}개 · 사립{" "}
+                    {nearby.daycare_private}개
+                    <span className="text-xs text-gray-400 ml-1">(반경 500m)</span>
+                  </span>
+                </p>
+              )}
+
+              {/* 대형병원(3차) — 가장 가까운 1건 */}
+              {nearby.big_hospital && nearby.big_hospital.distance < 9999 && (
+                <p className="flex items-center gap-2 text-sm">
+                  <span className="text-[0.7rem] font-bold text-brand bg-[#eef] rounded px-1.5 py-0.5 shrink-0">
+                    🏥
+                  </span>
+                  <span className="flex-1 truncate text-gray-800">
+                    {nearby.big_hospital.name}
+                  </span>
+                  <span className="text-xs text-gray-500 shrink-0">
+                    {nearby.big_hospital.distance}m
+                  </span>
+                </p>
+              )}
+
+              {/* 동물병원 — 가장 가까운 1건 */}
+              {nearby.vet_hospital && nearby.vet_hospital.distance < 9999 && (
+                <p className="flex items-center gap-2 text-sm">
+                  <span className="text-[0.7rem] font-bold text-brand bg-[#eef] rounded px-1.5 py-0.5 shrink-0">
+                    🐾
+                  </span>
+                  <span className="flex-1 truncate text-gray-800">
+                    {nearby.vet_hospital.name}
+                  </span>
+                  <span className="text-xs text-gray-500 shrink-0">
+                    {nearby.vet_hospital.distance}m
+                  </span>
+                </p>
+              )}
+
+              {/* 편의시설(반경 500m) — 아이콘+개수 그리드(원본 app.py 렌더 참고) */}
+              {nearby.convenience && (
+                <div className="pt-1">
+                  <p className="text-xs text-gray-400 mb-1.5">편의시설 (반경 500m)</p>
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                    {CONVENIENCE_ITEMS.map(({ key, icon, label }) => (
+                      <div
+                        key={key}
+                        className="flex flex-col items-center justify-center rounded-lg bg-[#f5f7ff] py-2 text-center"
+                      >
+                        <span className="text-lg" aria-hidden="true">
+                          {icon}
+                        </span>
+                        <span className="text-[0.7rem] text-gray-500">{label}</span>
+                        <span className="text-sm font-bold text-brand-dark">
+                          {nearby.convenience[key]}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </section>
+        </div>
       </div>
     </div>
   );

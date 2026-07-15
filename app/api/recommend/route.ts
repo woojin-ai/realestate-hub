@@ -15,6 +15,7 @@ import {
   computePriceRange,
   fillGeo,
   hasKakaoKey,
+  getSlopeScore,
   type GeoInfo,
   type RecommendItem,
   type RecommendResponse,
@@ -130,6 +131,20 @@ export async function GET(request: NextRequest) {
     new: num(sp.get("w_new"), 20),
   };
 
+  // ── 2026-07-15 추가: "평지 선호" 필터 + "최소 세대수" 필터 ──────────────────
+  // 평지 선호: 켜면 원본 recommender.py get_slope_score_vworld 기준 slope_score < 70
+  //   (완만 미만=경사/급경사, 또는 좌표 미확인으로 측정 불가) 단지를 제외한다.
+  const flatOnly = sp.get("flat_only") === "1" || sp.get("flat_only") === "true";
+  const FLAT_MIN_SCORE = 70; // 원본 임계값: >=70 이면 평지(90)/완만(70) 구간
+  // 최소 세대수: apt_info 캐시에 세대수가 있고 그 값이 기준 미만이면 제외. 캐시에 없는(미확인)
+  // 단지는 "국토부 데이터에 없으면 필터링에서 제외 처리" 지시대로 필터를 적용하지 않고 통과시킨다.
+  const minHouseholdsRaw = (sp.get("min_households") ?? "").trim();
+  const minHouseholdsVal = minHouseholdsRaw ? Number(minHouseholdsRaw) : null;
+  const minHouseholds =
+    minHouseholdsVal !== null && Number.isFinite(minHouseholdsVal) && minHouseholdsVal > 0
+      ? minHouseholdsVal
+      : null;
+
   const empty: RecommendResponse = {
     items: [],
     filled: 0,
@@ -234,8 +249,56 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // ── "평지 선호" 필터(2026-07-15) — filled(geo 확보분)만 대상, slope_score < 70(또는 좌표
+  //   미확인으로 측정 불가)인 단지는 제외한다. 스코어링 전에 적용해 카드 개수에 반영한다.
+  let filteredFilled = filled;
+  const slopeMap = new Map<string, number | null>();
+  if (flatOnly && filled.length > 0) {
+    const withCoord = filled.filter(({ geo }) => geo.lat != null && geo.lng != null);
+    const slopeResults = await Promise.all(
+      withCoord.map(async ({ apt, geo }) => ({
+        key: geoKey(apt.name, apt.dong),
+        score: await getSlopeScore(geo.lat as number, geo.lng as number),
+      }))
+    );
+    for (const { key, score } of slopeResults) slopeMap.set(key, score);
+    filteredFilled = filled.filter(({ apt, geo }) => {
+      if (geo.lat == null || geo.lng == null) return false; // 좌표 미확인 → 평지 판단 불가, 제외
+      const score = slopeMap.get(geoKey(apt.name, apt.dong));
+      return score != null && score >= FLAT_MIN_SCORE;
+    });
+  }
+
+  // ── "최소 세대수" 필터(2026-07-15) — apt_info 캐시에서 households 배치 조회. 캐시 미스(세대수
+  //   미확인)는 지시대로 필터링에서 제외 처리(=통과)한다. 캐시 자체가 없어도(supabase 미구성) 전체 통과.
+  const householdsMap = new Map<string, number | null>();
+  if (minHouseholds !== null && supabase && filteredFilled.length > 0) {
+    try {
+      const names = Array.from(new Set(filteredFilled.map(({ apt }) => apt.name)));
+      const { data, error } = await supabase
+        .from("apt_info")
+        .select("name,dong,households")
+        .eq("lawd_cd", lawdCd)
+        .in("name", names);
+      if (error) throw error;
+      for (const row of data ?? []) {
+        householdsMap.set(
+          geoKey(row.name as string, (row.dong as string) ?? ""),
+          row.households as number | null
+        );
+      }
+    } catch (err) {
+      console.error("[recommend: apt_info(세대수) 조회 실패, 필터 미적용]", err);
+    }
+    filteredFilled = filteredFilled.filter(({ apt }) => {
+      const hh = householdsMap.get(geoKey(apt.name, apt.dong));
+      if (hh == null) return true; // 미확인 → 필터 미적용(통과)
+      return hh >= minHouseholds;
+    });
+  }
+
   // ── 스코어링 → 상위 10개(원본 컷오프 계승) ─────────────────────────────────
-  const scored: RecommendItem[] = filled.map(({ apt, geo }) => {
+  const scored: RecommendItem[] = filteredFilled.map(({ apt, geo }) => {
     const ps = priceScore(apt.avg_price, maxPrice, priceRange);
     const ss = subwayScore(geo.subway_dist);
     const ns = newbuildScore(apt.build_year, newYear);
@@ -250,6 +313,8 @@ export async function GET(request: NextRequest) {
       subway_score: ss,
       newbuild_score: ns,
       score: compositeScore(ps, ss, ns, weights),
+      slope_score: flatOnly ? (slopeMap.get(geoKey(apt.name, apt.dong)) ?? null) : null,
+      households: householdsMap.get(geoKey(apt.name, apt.dong)) ?? null,
       // 원본 AptStat 전체(area_stats 포함)를 실어 클라가 rows 조회 없이 모달을 연다(design §4-C 옵션 b).
       apt,
     };

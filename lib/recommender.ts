@@ -24,6 +24,10 @@ export interface RecommendItem {
   subway_score: number; // 0~100
   newbuild_score: number; // 0~100
   score?: number; // 0~100 (서버가 넣어주는 초기값, 이후 클라가 재계산)
+  // ★ 2026-07-15 추가: "평지 선호" 필터용 원점수. flat_only 미사용 시 조회 생략되어 null.
+  slope_score?: number | null;
+  // ★ 2026-07-15 추가: "최소 세대수" 필터용 참고값(apt_info 캐시 히트 시에만 채워짐, 미확인 시 null).
+  households?: number | null;
   // ★ 원본 AptStat 전체(area_stats 포함) — 카드 클릭 시 AptDetailModal에 그대로 전달.
   //   후보 풀(top-200)은 클라의 rows(top-30)보다 넓어, rows 조회만으로는 top-30 밖 단지의
   //   모달이 열리지 않는다(design §4-C 옵션 b). 서버가 이미 가진 AptStat을 실어 rows 비의존화.
