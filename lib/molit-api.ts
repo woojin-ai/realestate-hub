@@ -101,7 +101,10 @@ async function callApi(
     `&numOfRows=1000`;
 
   const res = await fetch(url, {
-    signal: AbortSignal.timeout(30_000),
+    // 2026-07-15 prewarm 504 사고 대응: 30s는 Vercel maxDuration(60s) 대비 너무 길어
+    // 페이지 하나(특히 콜드 지역의 다중 페이지)가 전체 예산을 인질로 잡을 수 있었다.
+    // 8s로 단축 — 국토부 API는 보통 수백ms~2s 내 응답하므로 정상 케이스엔 영향 없다.
+    signal: AbortSignal.timeout(8_000),
     // 국토부 API는 매 호출 결과가 최신 신고분 반영이므로 캐시하지 않는다.
     cache: "no-store",
   });

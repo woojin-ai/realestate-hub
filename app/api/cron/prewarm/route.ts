@@ -39,7 +39,15 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MONTHS = 13; // 대시보드(/api/data) 기본 수집 범위와 동일
-const TIME_BUDGET_MS = 50_000; // maxDuration(60s) 대비 여유를 두고 조기 종료
+// 2026-07-15 504 사고 대응: 기존 50_000ms은 지역 루프 "바깥"에서만 체크되고 있었고,
+// 지역 하나(콜드 지역, 13개월 × CONCURRENCY=3 배치)가 예산 근처에서 시작되면 그 지역
+// 내부(월별 국토부 API 배치)는 체크 없이 끝까지 돌아 60s 하드리밋을 넘겨버렸다.
+// 아래 조치와 함께(지역 내부 배치 사이 체크 추가 + 국토부 API 개별 타임아웃 8s로 단축)
+// 예산 자체도 60s 하드리밋 대비 훨씬 보수적으로(25s) 낮춰 이중 안전장치를 둔다.
+const TIME_BUDGET_MS = 25_000;
+// 한 번의 호출에서 시도할 지역 수 상한(시간예산과 별개의 추가 안전장치) — 신선 지역이 몰려
+// 있어 시간예산이 금방 안 차더라도, 무한정 많은 지역을 한 호출에서 처리하지 않도록 막는다.
+const MAX_REGIONS_PER_RUN = 20;
 const CONCURRENCY = 3; // 월별 국토부 API 병렬 배치(기존 라우트들과 동일한 값)
 const BUILDING_TYPE = "아파트" as const;
 const EMPTY_MONTH: MonthData = { 매매: [], 전세: [], 월세: [] };
@@ -79,8 +87,9 @@ function checkAuth(request: NextRequest): boolean {
  */
 async function prewarmRegion(
   supabase: ReturnType<typeof getSupabaseServerClient>,
-  lawdCd: string
-): Promise<{ fetchedMonths: number }> {
+  lawdCd: string,
+  deadline: number
+): Promise<{ fetchedMonths: number; incomplete: boolean }> {
   const ymList = getYmList(MONTHS);
 
   let cacheRow: FetchCacheStatusRow | null = null;
@@ -107,10 +116,20 @@ async function prewarmRegion(
     if (!canSkip) monthsToFetch.push(ym);
   });
 
-  if (monthsToFetch.length === 0) return { fetchedMonths: 0 };
+  if (monthsToFetch.length === 0) return { fetchedMonths: 0, incomplete: false };
 
   const allData: AllData = {};
+  let fetchedCount = 0;
+  let incomplete = false;
   for (let i = 0; i < monthsToFetch.length; i += CONCURRENCY) {
+    // 배치(청크) 시작 전마다 시간예산을 확인한다 — 콜드 지역(월 배치 여러 개)이 예산을
+    // 다 써버리기 전에 여기서 끊어야, 이 지역 하나가 전체 함수 실행시간을 인질로 잡지 않는다.
+    // (배치 하나 자체도 개별 국토부 API 호출 8s 타임아웃으로 상한이 있어, 이 체크와
+    // 합쳐지면 한 배치가 예산을 크게 초과해도 다음 배치는 확실히 스킵된다.)
+    if (Date.now() >= deadline) {
+      incomplete = true;
+      break;
+    }
     const chunk = monthsToFetch.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
       chunk.map(async (ym) => {
@@ -126,28 +145,35 @@ async function prewarmRegion(
       allData[ym] = data;
       try {
         await upsertMonthDeals(supabase, lawdCd, BUILDING_TYPE, ym, data);
+        fetchedCount += 1;
       } catch (err) {
         console.error(`[prewarm: deals upsert 실패] ${lawdCd} ${ym}`, err);
       }
     }
   }
 
-  try {
-    for (const dealType of ["매매", "전세"] as const) {
-      await upsertMonthlyStats(supabase, lawdCd, BUILDING_TYPE, dealType, allData);
+  // 예산 초과로 중간에 끊었으면(incomplete) 이번 지역은 13개월 전체를 못 채웠으므로
+  // monthly_stats/cache status를 "ready"로 확정하지 않는다 — 이미 개별 upsertMonthDeals된
+  // deals 행은 남아 있으니(다음 실행에서 같은 달을 다시 upsert해도 멱등이라 안전) 손실은
+  // 없고, 다음 크론 실행이 이 지역을 처음부터(또는 캐시 상태 기준으로) 다시 시도한다.
+  if (!incomplete) {
+    try {
+      for (const dealType of ["매매", "전세"] as const) {
+        await upsertMonthlyStats(supabase, lawdCd, BUILDING_TYPE, dealType, allData);
+      }
+      const newMonthsCollected = Math.max(cacheRow?.months_collected ?? 0, MONTHS);
+      const oldestYm = ymList[ymList.length - 1];
+      await upsertCacheStatus(supabase, lawdCd, BUILDING_TYPE, {
+        months_collected: newMonthsCollected,
+        last_deal_ym: oldestYm,
+        status: "ready",
+      });
+    } catch (err) {
+      console.error(`[prewarm: 영속화 실패] ${lawdCd}`, err);
     }
-    const newMonthsCollected = Math.max(cacheRow?.months_collected ?? 0, MONTHS);
-    const oldestYm = ymList[ymList.length - 1];
-    await upsertCacheStatus(supabase, lawdCd, BUILDING_TYPE, {
-      months_collected: newMonthsCollected,
-      last_deal_ym: oldestYm,
-      status: "ready",
-    });
-  } catch (err) {
-    console.error(`[prewarm: 영속화 실패] ${lawdCd}`, err);
   }
 
-  return { fetchedMonths: monthsToFetch.length };
+  return { fetchedMonths: fetchedCount, incomplete };
 }
 
 async function getProgress(supabase: ReturnType<typeof getSupabaseServerClient>): Promise<number> {
@@ -198,23 +224,43 @@ export async function GET(request: NextRequest) {
   }
 
   const startTime = Date.now();
+  const deadline = startTime + TIME_BUDGET_MS;
   let idx = (await getProgress(supabase)) % regions.length;
 
-  const processed: Array<{ sido: string; gu: string; lawdCd: string; fetchedMonths: number }> = [];
+  const processed: Array<{
+    sido: string;
+    gu: string;
+    lawdCd: string;
+    fetchedMonths: number;
+    incomplete?: boolean;
+  }> = [];
   let count = 0;
 
   // 한 바퀴(regions.length번) 이상은 돌지 않는다(전부 신선해서 매번 즉시 스킵되는 상황에서도
-  // 무한루프 없이 종료). 시간예산을 넘기면 그 자리에서 멈추고 인덱스를 저장해 다음 실행에 이어간다.
-  while (count < regions.length && Date.now() - startTime < TIME_BUDGET_MS) {
+  // 무한루프 없이 종료). MAX_REGIONS_PER_RUN도 별도 안전장치로 둔다. 시간예산을 넘기면 그
+  // 자리에서 멈추고 인덱스를 저장해 다음 실행에 이어간다. 지역 내부(월별 배치)의 예산 체크는
+  // prewarmRegion에 위임한다(콜드 지역 하나가 예산을 인질로 잡는 문제의 핵심 수정).
+  while (
+    count < regions.length &&
+    count < MAX_REGIONS_PER_RUN &&
+    Date.now() < deadline
+  ) {
     const region = regions[idx];
+    let incomplete = false;
     try {
-      const result = await prewarmRegion(supabase, region.lawdCd);
-      processed.push({ ...region, fetchedMonths: result.fetchedMonths });
+      const result = await prewarmRegion(supabase, region.lawdCd, deadline);
+      incomplete = result.incomplete;
+      processed.push({ ...region, fetchedMonths: result.fetchedMonths, incomplete });
     } catch (err) {
       console.error(`[prewarm: 지역 처리 실패] ${region.sido} ${region.gu}`, err);
     }
-    idx = (idx + 1) % regions.length;
     count += 1;
+    // incomplete(예산 초과로 중간에 끊긴 지역)이면 인덱스를 전진시키지 않는다 — 다음 실행이
+    // 같은 지역부터 이어받아 나머지 개월을 마저 채우도록 한다. 어차피 이번 루프는 시간예산도
+    // 이미 다 썼을 것이므로(그래서 incomplete가 됐으므로) 곧바로 while 조건에서 빠져나간다.
+    if (!incomplete) {
+      idx = (idx + 1) % regions.length;
+    }
     await saveProgress(supabase, idx);
   }
 
