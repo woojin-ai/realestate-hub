@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import RegionSelector from "@/components/RegionSelector";
 import BuildingTypeToggle from "@/components/BuildingTypeToggle";
 import DealTypeTabs from "@/components/DealTypeTabs";
@@ -87,9 +88,20 @@ export default function DashboardPage() {
 
   return (
     <>
-      <header className="bg-gradient-to-br from-brand-dark to-[#283593] text-white px-4 py-3 md:px-8 md:py-5 flex items-center gap-3">
-        <span className="text-2xl md:text-3xl">🏘️</span>
-        <div>
+      <header className="relative overflow-hidden bg-gradient-to-br from-brand-dark to-[#283593] text-white px-4 py-3 md:px-8 md:py-5 flex items-center gap-3">
+        <div className="hidden md:block absolute inset-y-0 right-0 w-[46%] lg:w-[40%] pointer-events-none">
+          <Image
+            src="/images/hero-illustration.png"
+            alt=""
+            fill
+            priority
+            sizes="(max-width: 1024px) 46vw, 40vw"
+            className="object-cover object-left opacity-40"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-brand-dark via-brand-dark/70 to-transparent" />
+        </div>
+        <span className="relative z-10 text-2xl md:text-3xl">🏘️</span>
+        <div className="relative z-10">
           <h1 className="text-base md:text-2xl font-bold">부동산 실거래가 대시보드</h1>
           <p className="text-xs md:text-sm opacity-80">
             국토교통부 공공데이터 기반 아파트 실거래가 조회 (빌라·단독 조회 준비중)
