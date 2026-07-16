@@ -179,16 +179,44 @@ export async function GET(request: NextRequest) {
       for (const dealType of ["매매", "전세"] as const) {
         await upsertMonthlyStats(supabase, lawdCd, buildingType, dealType, statsData);
       }
-      // 이번 요청에 fetch 실패가 하나라도 있었으면 status를 "ready"로 올리거나
-      // months_collected를 확장하지 않는다 — 그래야 다음 조회/프리워밍이 이 지역을
-      // 재시도한다(실패가 없으면 기존과 동일하게 완료 마킹).
-      if (!anyFetchFailed) {
-        const newMonthsCollected = Math.max(cacheRow?.months_collected ?? 0, months);
-        const oldestYm = ymList[ymList.length - 1];
+      // months_collected는 "인덱스 0(최신월)부터 연속으로 정상 확보된 개월 수"로 계산한다
+      // (prewarm/route.ts의 extensionContiguousCount와 동일한 불변식). "정상 확보" =
+      // DB 캐시 히트(monthsFromDb) 또는 이번에 라이브로 가져왔고 실패하지 않은 달. 실패한
+      // 달(failedMonths)은 연속을 끊어 months_collected가 그 지점을 넘어 전진하지 못하게 한다.
+      //
+      // 기존에는 실패가 하나라도 있으면(anyFetchFailed) 진행을 "전혀" 저장하지 않는
+      // all-or-nothing 방식이었다. 그래서 대형 팬아웃 지역(화성 41590 등)은 한 요청에서
+      // 13개월×4코드를 몰아 호출하다 일부 달이 레이트리밋에 걸리면 매번 0개월로 되돌아가,
+      // 조회를 아무리 반복해도 영영 수렴하지 못했다(months_collected가 0에서 안 올라감).
+      // 이제는 실패 앞의 연속 구간까지는 저장해, 다음 조회/프리워밍이 나머지만 이어받아
+      // 결국 채운다. 정상 지역(전체 깨끗)은 contiguous===months가 돼 기존과 동일하게
+      // 한 번에 완료(ready) 마킹되므로 회귀가 없다.
+      const okYms = new Set<string>(monthsFromDb);
+      for (const ym of monthsToFetch) {
+        if (!failedMonths.has(ym)) okYms.add(ym);
+      }
+      // DB 로드 실패로 monthsToFetch에 재편입된 뒤 재-fetch까지 실패한 달이 monthsFromDb에도
+      // 남아 있을 수 있으므로, 실패한 달은 연속 계산에서 확실히 제외한다.
+      for (const ym of failedMonths) okYms.delete(ym);
+      let contiguous = 0;
+      for (const ym of ymList) {
+        if (okYms.has(ym)) contiguous += 1;
+        else break;
+      }
+      const newMonthsCollected = Math.max(cacheRow?.months_collected ?? 0, contiguous);
+      if (newMonthsCollected > 0) {
+        // 요청 창(months) 전체가 연속으로 깨끗하고 실패가 없을 때만 "ready"(완료)로 확정한다
+        // — 그래야 cacheFreshToday(최신월 신선도)가 미완료 지역을 "오늘 이미 신선함"으로
+        // 오판하지 않는다. 부분 진행이면 "collecting"으로 저장해 진행만 남기고, 최신월(index 0)은
+        // 다음 조회에서 다시 신선하게 가져오게 한다.
+        const fullyCollected = !anyFetchFailed && contiguous >= months;
         await upsertCacheStatus(supabase, lawdCd, buildingType, {
           months_collected: newMonthsCollected,
-          last_deal_ym: oldestYm,
-          status: "ready",
+          // 상한 클램프: months_collected가 이번 요청창(ymList.length=months)보다 클 수 있어
+          // (기존 수집분 > 요청 months, 예: 13개월 수집된 지역을 months=3으로 조회) 인덱스가
+          // ymList 범위를 넘으면 undefined가 되므로, 요청창의 최고령월로 클램프한다(항상 in-bounds).
+          last_deal_ym: ymList[Math.min(newMonthsCollected, ymList.length) - 1],
+          status: fullyCollected ? "ready" : "collecting",
         });
       }
     } catch (err) {
