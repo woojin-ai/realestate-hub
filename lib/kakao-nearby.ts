@@ -60,6 +60,27 @@ export interface NearbyAll extends NearbySchools {
   convenience: ConvenienceCounts;
 }
 
+// 스키마 버전 가드(2026-07-16 추가): apt_nearby 캐시 히트 시 payload가 "현재" NearbyAll 스키마의
+// 필드를 모두 채우고 있는지 검증한다. 어린이집/대형병원/동물병원/편의시설 확장(2026-07-15) 이전에
+// 캐시된 구버전 payload(학교 정보만 있음)는 나이(90일 TTL)만으로는 걸러지지 않으므로,
+// 필드 존재 여부로 별도 판별해 구버전이면 캐시 미스로 취급하고 라이브 재조회 → upsert로 자동 갱신한다.
+// 스키마가 또 확장되면 이 목록에 신규 필드 키만 추가하면 된다.
+const REQUIRED_NEARBY_KEYS: (keyof NearbyAll)[] = [
+  "elementary",
+  "middle",
+  "high",
+  "daycare_public",
+  "daycare_private",
+  "big_hospital",
+  "vet_hospital",
+  "convenience",
+];
+
+export function isPayloadUpToDate(payload: unknown): payload is NearbyAll {
+  if (!payload || typeof payload !== "object") return false;
+  return REQUIRED_NEARBY_KEYS.every((key) => key in (payload as Record<string, unknown>));
+}
+
 // 원본 recommender.py 16~29: 대형(3차)병원 판별 키워드 + 동물병원 판별 키워드.
 const BIG_HOSPITAL_KEYWORDS: string[] = [
   "대학병원", "대학교병원", "의과대학", "의대병원",

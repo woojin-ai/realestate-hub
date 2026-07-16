@@ -1,7 +1,8 @@
 // 아파트 상세 모달 — 주변 시설(Stage 3) 섹션 API (docs/design/apt-detail-modal.md §12·§14-2 / 기획안 §1-C·§2-C·§5-3단계)
 //
-// apt_nearby 영속 캐시 우선 조회 → 히트 & fetched_at 90일 이내면 payload 즉시 반환(카카오 0콜),
-// 미스(또는 90일 초과)면 좌표 확보 후 fetchNearbySchools(카카오 학교만) 라이브 조회 → payload upsert.
+// apt_nearby 영속 캐시 우선 조회 → 히트 & fetched_at 90일 이내 & 현재 스키마 필드 완비(isPayloadUpToDate)
+// 면 payload 즉시 반환(카카오 0콜). 미스(90일 초과 또는 구버전 스키마)면 좌표 확보 후
+// fetchNearbyAll 라이브 조회 → payload upsert(2026-07-16: 스키마 변경 시 수동 캐시 삭제 불필요하도록 가드 추가).
 // 좌표는 apt_geo 캐시 조회 → 없으면 lib/recommender.ts getCoordinates 라이브. 좌표 확보 실패 시 빈 결과.
 // Supabase/apt_nearby 부재·조회·upsert 실패는 전부 try/catch 무중단(라이브 폴백, apt-location/apt-info 패턴 계승).
 // 콜드 예외 시 500이 아니라 {elementary:[],middle:[],high:[]}로 graceful 반환. 시크릿은 노출하지 않는다.
@@ -9,7 +10,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { getCoordinates } from "@/lib/recommender";
-import { fetchNearbyAll, type NearbyAll } from "@/lib/kakao-nearby";
+import { fetchNearbyAll, isPayloadUpToDate, type NearbyAll } from "@/lib/kakao-nearby";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -66,8 +67,9 @@ export async function GET(request: NextRequest) {
         const fetchedAt = data.fetched_at
           ? new Date(data.fetched_at as string).getTime()
           : 0;
-        // 90일 이내 히트만 재사용(카카오 0콜). 초과면 아래 라이브 재조회로 진행.
-        if (Date.now() - fetchedAt < NEARBY_TTL_MS) {
+        // 90일 이내 히트 + 현재 스키마의 필드를 모두 채운 payload일 때만 재사용(카카오 0콜).
+        // TTL 초과 또는 구버전 스키마(필드 누락)면 아래 라이브 재조회로 진행해 최신 스키마로 갱신한다.
+        if (Date.now() - fetchedAt < NEARBY_TTL_MS && isPayloadUpToDate(data.payload)) {
           return NextResponse.json(data.payload);
         }
       }
