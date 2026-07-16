@@ -73,7 +73,10 @@ async function loadAptAllData(lawdCd: string): Promise<AllData> {
     const results = await Promise.all(
       chunk.map(async (ym) => {
         try {
-          return { ym, data: await collectMonth(lawdCd, ym, "아파트") };
+          // 추천은 읽기 전용(캐시 영속화 없음)이라 failed 플래그로 캐시를 마킹하지 않는다.
+          // 확보된 데이터(부분 포함)만 in-memory로 집계에 쓴다 — collectMonth의 data만 사용.
+          const { data } = await collectMonth(lawdCd, ym, "아파트");
+          return { ym, data };
         } catch (err) {
           console.error(`[recommend: collectMonth 실패] ym=${ym}`, err);
           return { ym, data: EMPTY_MONTH };

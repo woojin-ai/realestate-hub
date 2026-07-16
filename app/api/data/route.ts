@@ -128,23 +128,34 @@ export async function GET(request: NextRequest) {
   }
 
   // ── 부족한 개월만 국토부 API 호출 (배치 병렬) ───────────────────
+  // 캐시 포이즈닝 방지: molit fetch가 "실제로 실패한 달"(레이트리밋/타임아웃 등)과
+  // "정상적으로 0건인 달"을 collectMonth의 failed 플래그로 구분한다. 실패한 달은
+  // (1) deals에 빈/부분 데이터를 영속화하지 않고 (2) 아래에서 stats/cache-status를
+  // 완료로 마킹하지 못하게 막아, 다음 조회/프리워밍이 그 지역을 재시도하게 한다.
+  const failedMonths = new Set<string>();
   for (let i = 0; i < monthsToFetch.length; i += CONCURRENCY) {
     const chunk = monthsToFetch.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
       chunk.map(async (ym) => {
         // molit-api가 개별 예외를 흡수하지만, 예기치 못한 throw로 배치 전체가
         // reject되지 않도록 월 단위로 한 번 더 가드한다(부분 데이터라도 반환).
+        // 예기치 못한 throw는 그 달을 실패로 취급한다(failed:true).
         try {
-          return { ym, data: await collectMonth(lawdCd, ym, buildingType) };
+          const { data, failed } = await collectMonth(lawdCd, ym, buildingType);
+          return { ym, data, failed };
         } catch (err) {
           console.error(`[collectMonth 실패] ym=${ym}`, err);
-          return { ym, data: EMPTY_MONTH };
+          return { ym, data: EMPTY_MONTH, failed: true };
         }
       })
     );
-    for (const { ym, data } of results) {
+    for (const { ym, data, failed } of results) {
+      // 응답 payload에는 실패 여부와 무관하게 확보된 데이터를 그대로 싣는다(응답 200 유지).
       allData[ym] = data;
-      if (supabase) {
+      if (failed) failedMonths.add(ym);
+      // 실패한 달은 deals에 영속화하지 않는다 — 빈/부분 데이터를 "정상 수집분"처럼
+      // 굳히면 이후 조회가 그 캐시를 그대로 읽어 0건이 고착되기 때문(포이즈닝 원인).
+      if (supabase && !failed) {
         try {
           await upsertMonthDeals(supabase, lawdCd, buildingType, ym, data);
         } catch (err) {
@@ -156,18 +167,30 @@ export async function GET(request: NextRequest) {
 
   // ── Supabase 영속화(캐시 상태/월별 통계 갱신) — best-effort ───────
   // 실패해도 이번 요청 응답 자체는 이미 계산된 allData로 정상 반환한다.
+  const anyFetchFailed = failedMonths.size > 0;
   if (supabase) {
     try {
-      for (const dealType of ["매매", "전세"] as const) {
-        await upsertMonthlyStats(supabase, lawdCd, buildingType, dealType, allData);
+      // 실패한 달은 stats 집계 입력에서 제외한다(count=0/avg=null 오염 방지). 정상 수집된
+      // 달(DB 캐시 히트분 포함)은 그대로 반영되므로 정상 지역 통계 갱신에는 영향 없다.
+      const statsData: AllData = {};
+      for (const [ym, data] of Object.entries(allData)) {
+        if (!failedMonths.has(ym)) statsData[ym] = data;
       }
-      const newMonthsCollected = Math.max(cacheRow?.months_collected ?? 0, months);
-      const oldestYm = ymList[ymList.length - 1];
-      await upsertCacheStatus(supabase, lawdCd, buildingType, {
-        months_collected: newMonthsCollected,
-        last_deal_ym: oldestYm,
-        status: "ready",
-      });
+      for (const dealType of ["매매", "전세"] as const) {
+        await upsertMonthlyStats(supabase, lawdCd, buildingType, dealType, statsData);
+      }
+      // 이번 요청에 fetch 실패가 하나라도 있었으면 status를 "ready"로 올리거나
+      // months_collected를 확장하지 않는다 — 그래야 다음 조회/프리워밍이 이 지역을
+      // 재시도한다(실패가 없으면 기존과 동일하게 완료 마킹).
+      if (!anyFetchFailed) {
+        const newMonthsCollected = Math.max(cacheRow?.months_collected ?? 0, months);
+        const oldestYm = ymList[ymList.length - 1];
+        await upsertCacheStatus(supabase, lawdCd, buildingType, {
+          months_collected: newMonthsCollected,
+          last_deal_ym: oldestYm,
+          status: "ready",
+        });
+      }
     } catch (err) {
       console.error("[Supabase 영속화 실패(응답에는 영향 없음)]", err);
     }

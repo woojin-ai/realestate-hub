@@ -136,6 +136,10 @@ async function prewarmRegion(
   const allData: AllData = {};
   let fetchedCount = 0;
   let incomplete = false;
+  // 캐시 포이즈닝 방지: molit fetch가 실제로 실패한 달(레이트리밋/타임아웃 등)이 하나라도
+  // 있으면, 그 지역을 이번 실행에서 "ready(완료)"로 확정하지 않는다(다음 크론이 재시도).
+  // 대형 지역(예: 화성 41590)이 레이트리밋에 걸려도 빈 데이터가 완료로 굳는 걸 막는 핵심.
+  let anyFailed = false;
   // 2026-07-15 "같은 지역에서 진행이 안 됨" 사고 대응: 기존에는 지역 하나를 13개월 다
   // 끝내야만(!incomplete) fetch_cache_status를 갱신했다. 그래서 콜드 지역이 시간예산
   // 부족으로 중간에 멈추면 이미 deals 테이블엔 upsert된 개월이 있는데도 months_collected가
@@ -160,28 +164,35 @@ async function prewarmRegion(
     const results = await Promise.all(
       chunk.map(async ({ ym, i: idx }) => {
         try {
-          return { ym, idx, data: await collectMonth(lawdCd, ym, BUILDING_TYPE) };
+          const { data, failed } = await collectMonth(lawdCd, ym, BUILDING_TYPE);
+          return { ym, idx, data, failed };
         } catch (err) {
           console.error(`[prewarm: collectMonth 실패] ${lawdCd} ${ym}`, err);
-          return { ym, idx, data: EMPTY_MONTH };
+          return { ym, idx, data: EMPTY_MONTH, failed: true };
         }
       })
     );
-    for (const { ym, idx, data } of results) {
+    for (const { ym, idx, data, failed } of results) {
       allData[ym] = data;
+      if (failed) anyFailed = true;
       let upsertOk = true;
-      try {
-        await upsertMonthDeals(supabase, lawdCd, BUILDING_TYPE, ym, data);
-        fetchedCount += 1;
-      } catch (err) {
-        console.error(`[prewarm: deals upsert 실패] ${lawdCd} ${ym}`, err);
-        upsertOk = false;
+      // 실패한 달은 deals에 영속화하지 않는다(빈/부분 데이터를 정상 수집분처럼 굳히지 않음).
+      if (!failed) {
+        try {
+          await upsertMonthDeals(supabase, lawdCd, BUILDING_TYPE, ym, data);
+          fetchedCount += 1;
+        } catch (err) {
+          console.error(`[prewarm: deals upsert 실패] ${lawdCd} ${ym}`, err);
+          upsertOk = false;
+        }
       }
       // index 0(baseCollected 이전이면 단순 재갱신용)은 연속 카운트에 포함하지 않는다.
       // baseCollected 이상 인덱스만 "이번에 새로 확장한 연속 구간"이며, monthsToFetch가
       // ymList 순서(오름차순 i)를 그대로 보존하므로 처리 순서 = 인덱스 오름차순이 보장된다.
+      // fetch 실패(failed)는 연속성을 끊는다 — months_collected가 실패 지점을 넘어
+      // 전진하지 못하게 해, 빈 캐시가 완료 범위로 굳는 것을 막는다.
       if (idx >= baseCollected) {
-        if (upsertOk && extensionStillContiguous) {
+        if (!failed && upsertOk && extensionStillContiguous) {
           extensionContiguousCount += 1;
         } else {
           extensionStillContiguous = false;
@@ -213,7 +224,12 @@ async function prewarmRegion(
   // deals 행과 위에서 배치마다 갱신한 months_collected는 남아 있으니(다음 실행에서 같은
   // 달을 다시 upsert해도 멱등이라 안전) 손실은 없고, 다음 크론 실행이 이 지역을
   // (부분 진행된 지점부터, 남은 개월만) 이어받는다.
-  if (!incomplete) {
+  //
+  // 추가로 anyFailed(레이트리밋/타임아웃 등으로 실제로 실패한 달이 하나라도 있음)일 때도
+  // "ready"로 확정하지 않는다 — 화성 41590처럼 완주(!incomplete)했더라도 빈/부분 데이터를
+  // 완료로 굳히면 이후 조회가 그 캐시를 재사용해 0건이 고착되기 때문(포이즈닝의 핵심 원인).
+  // 실패 지점까지만 반영된 months_collected("collecting")를 남겨 다음 크론이 재시도한다.
+  if (!incomplete && !anyFailed) {
     try {
       for (const dealType of ["매매", "전세"] as const) {
         await upsertMonthlyStats(supabase, lawdCd, BUILDING_TYPE, dealType, allData);

@@ -84,6 +84,22 @@ export interface RentRecord {
   contract_type: string;
 }
 
+/**
+ * fetch 결과 봉투. `failed`는 "하드 실패"(네트워크/타임아웃/레이트리밋 등 callApi
+ * throw, 비-XML 응답, XML 파싱 오류, resultCode≠"00"/"000")나 페이지네이션 중 일부
+ * 페이지 실패가 한 번이라도 있었는지를 뜻한다. `records`는 그때까지 모은 데이터로,
+ * 하드 실패 시엔 부분 데이터이거나 빈 배열일 수 있다.
+ *
+ * ⚠️ 핵심 불변식: `failed:false && records:[]` = "국토부가 resultCode 정상으로 0건을
+ * 응답한 달"(정상 0건)이고, `failed:true` = "fetch가 실제로 깨진 달"이다. 상위
+ * (collectMonth→route)는 이 둘을 반드시 구분해, 실패한 달은 캐시를 완료(ready/
+ * months_collected)로 굳히지 않고 다음 프리워밍/조회가 재시도하게 해야 한다.
+ */
+export interface FetchOutcome<T> {
+  records: T[];
+  failed: boolean;
+}
+
 // parseTagValue: false — fast-xml-parser는 기본적으로 "00" 같은 숫자형 텍스트를
 // 숫자로 자동 변환해 앞자리 0을 잘라버린다(resultCode "00" → 0 → "0").
 // 원본 Python의 ElementTree.findtext()는 텍스트를 그대로 문자열로 반환하므로,
@@ -139,15 +155,20 @@ export async function fetchTrade(
   lawdCd: string,
   dealYmd: string,
   buildingType: BuildingType = "아파트"
-): Promise<TradeRecord[]> {
+): Promise<FetchOutcome<TradeRecord>> {
   const codes = resolveLawdCodes(lawdCd);
   if (codes.length === 1) {
     return fetchTradeSingle(codes[0], dealYmd, buildingType);
   }
+  // 팬아웃(부천 등): 레거시 구 코드 중 하나라도 하드 실패면 그 달 전체를 실패로 본다
+  // (일부 구만 성공한 부분 데이터로 캐시를 완료 마킹하면 나머지 구가 영구 누락됨).
   const perCode = await Promise.all(
     codes.map((code) => fetchTradeSingle(code, dealYmd, buildingType))
   );
-  return perCode.flat();
+  return {
+    records: perCode.flatMap((r) => r.records),
+    failed: perCode.some((r) => r.failed),
+  };
 }
 
 /** 단일 LAWD_CD 한 달치 매매 조회(페이지네이션 포함) — fetchTrade의 팬아웃 내부 구현. */
@@ -155,7 +176,7 @@ async function fetchTradeSingle(
   lawdCd: string,
   dealYmd: string,
   buildingType: BuildingType
-): Promise<TradeRecord[]> {
+): Promise<FetchOutcome<TradeRecord>> {
   const baseUrl = TRADE_URLS[buildingType];
   const results: TradeRecord[] = [];
   let page = 1;
@@ -165,13 +186,15 @@ async function fetchTradeSingle(
     try {
       text = (await callApi(baseUrl, lawdCd, dealYmd, page)).trim();
     } catch (e) {
+      // 네트워크/타임아웃/레이트리밋 등 = 하드 실패. 정상 0건과 반드시 구분한다.
       console.error(`[매매 fetch 예외] ${dealYmd} p${page}:`, e);
-      break;
+      return { records: results, failed: true };
     }
 
     if (!text.startsWith("<")) {
+      // 비-XML(레이트리밋 HTML/JSON 에러메시지 등) = 하드 실패.
       console.error(`[매매 오류] ${dealYmd}: ${text.slice(0, 100)}`);
-      break;
+      return { records: results, failed: true };
     }
 
     let root: MolitXmlNode;
@@ -179,7 +202,7 @@ async function fetchTradeSingle(
       root = parser.parse(text);
     } catch (e) {
       console.error(`[매매 파싱 오류] ${dealYmd}:`, e);
-      break;
+      return { records: results, failed: true };
     }
 
     const response = root?.response;
@@ -187,7 +210,7 @@ async function fetchTradeSingle(
     if (resultCode !== "00" && resultCode !== "000") {
       const msg = textOf(response?.header?.resultMsg);
       console.error(`[매매 API 오류] ${dealYmd} - ${resultCode}: ${msg}`);
-      break;
+      return { records: results, failed: true };
     }
 
     const body = response?.body;
@@ -229,7 +252,9 @@ async function fetchTradeSingle(
     page += 1;
   }
 
-  return results;
+  // 여기까지 왔으면 resultCode 정상 + 페이지네이션을 끝까지 정상 소진했다는 뜻이므로
+  // failed:false. results가 빈 배열이면 "정상적으로 0건인 달"이다(하드 실패 아님).
+  return { records: results, failed: false };
 }
 
 /** 전월세 실거래가 조회 (한 달치, 페이지네이션 포함). buildingType으로 아파트/빌라/단독 구분.
@@ -238,15 +263,19 @@ export async function fetchRent(
   lawdCd: string,
   dealYmd: string,
   buildingType: BuildingType = "아파트"
-): Promise<RentRecord[]> {
+): Promise<FetchOutcome<RentRecord>> {
   const codes = resolveLawdCodes(lawdCd);
   if (codes.length === 1) {
     return fetchRentSingle(codes[0], dealYmd, buildingType);
   }
+  // 팬아웃(부천 등): 레거시 구 코드 중 하나라도 하드 실패면 그 달 전체를 실패로 본다.
   const perCode = await Promise.all(
     codes.map((code) => fetchRentSingle(code, dealYmd, buildingType))
   );
-  return perCode.flat();
+  return {
+    records: perCode.flatMap((r) => r.records),
+    failed: perCode.some((r) => r.failed),
+  };
 }
 
 /** 단일 LAWD_CD 한 달치 전월세 조회(페이지네이션 포함) — fetchRent의 팬아웃 내부 구현. */
@@ -254,7 +283,7 @@ async function fetchRentSingle(
   lawdCd: string,
   dealYmd: string,
   buildingType: BuildingType
-): Promise<RentRecord[]> {
+): Promise<FetchOutcome<RentRecord>> {
   const baseUrl = RENT_URLS[buildingType];
   const results: RentRecord[] = [];
   let page = 1;
@@ -264,13 +293,14 @@ async function fetchRentSingle(
     try {
       text = (await callApi(baseUrl, lawdCd, dealYmd, page)).trim();
     } catch (e) {
+      // 네트워크/타임아웃/레이트리밋 등 = 하드 실패. 정상 0건과 반드시 구분한다.
       console.error(`[전월세 fetch 예외] ${dealYmd} p${page}:`, e);
-      break;
+      return { records: results, failed: true };
     }
 
     if (!text.startsWith("<")) {
       console.error(`[전월세 오류] ${dealYmd}: ${text.slice(0, 100)}`);
-      break;
+      return { records: results, failed: true };
     }
 
     let root: MolitXmlNode;
@@ -278,7 +308,7 @@ async function fetchRentSingle(
       root = parser.parse(text);
     } catch (e) {
       console.error(`[전월세 파싱 오류] ${dealYmd}:`, e);
-      break;
+      return { records: results, failed: true };
     }
 
     const response = root?.response;
@@ -286,7 +316,7 @@ async function fetchRentSingle(
     if (resultCode !== "00" && resultCode !== "000") {
       const msg = textOf(response?.header?.resultMsg);
       console.error(`[전월세 API 오류] ${dealYmd} - ${resultCode}: ${msg}`);
-      break;
+      return { records: results, failed: true };
     }
 
     const body = response?.body;
@@ -340,7 +370,8 @@ async function fetchRentSingle(
     page += 1;
   }
 
-  return results;
+  // resultCode 정상 + 페이지네이션 정상 소진 = failed:false(빈 배열이면 정상 0건).
+  return { records: results, failed: false };
 }
 
 /** 최근 N개월의 YYYYMM 리스트 반환 (원본 fetcher.py get_ym_list) */
@@ -362,17 +393,31 @@ export interface MonthData {
   월세: RentRecord[];
 }
 
+/**
+ * collectMonth 결과. `data`는 그 달의 매매/전세/월세 레코드, `failed`는 매매·전월세
+ * fetch 중 하드 실패가 한 번이라도 있었는지다. 호출부(route)는 `failed:true`인 달을
+ * "정상 0건"과 구분해, 그 달의 빈/부분 데이터로 캐시를 완료(ready/months_collected)로
+ * 굳히지 않도록 써야 한다(그래야 다음 프리워밍/조회가 그 지역을 재시도한다).
+ */
+export interface CollectMonthResult {
+  data: MonthData;
+  failed: boolean;
+}
+
 /** 지정한 월(YYYYMM) 하나의 매매+전세+월세 데이터를 모두 수집(건물유형별) */
 export async function collectMonth(
   lawdCd: string,
   ym: string,
   buildingType: BuildingType = "아파트"
-): Promise<MonthData> {
+): Promise<CollectMonthResult> {
   const [trades, rents] = await Promise.all([
     fetchTrade(lawdCd, ym, buildingType),
     fetchRent(lawdCd, ym, buildingType),
   ]);
-  const jeonse = rents.filter((r) => r.deal_type === "전세");
-  const wolse = rents.filter((r) => r.deal_type === "월세");
-  return { 매매: trades, 전세: jeonse, 월세: wolse };
+  const jeonse = rents.records.filter((r) => r.deal_type === "전세");
+  const wolse = rents.records.filter((r) => r.deal_type === "월세");
+  return {
+    data: { 매매: trades.records, 전세: jeonse, 월세: wolse },
+    failed: trades.failed || rents.failed,
+  };
 }
