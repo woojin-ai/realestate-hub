@@ -303,4 +303,47 @@ export async function upsertMonthlyStats(
   if (error) throw error;
 }
 
+/**
+ * 오염(캐시 포이즈닝)되어 굳은 지역 캐시를 세 테이블(deals/monthly_stats/
+ * fetch_cache_status)에서 통째로 삭제한다. 삭제 후 다음 /api/data 조회가 국토부 API로
+ * 재-fetch하며 63391ab의 자가치유 로직으로 정상 데이터를 다시 채운다.
+ * 삭제된 행 수는 각 delete에 { count: "exact", head: true }를 줘서 Content-Range로
+ * 받는다. .select()로 삭제 행을 되받아 length를 세는 방식은 PostgREST 기본 반환행
+ * 상한(1000, 위 PAGE_SIZE 주석 참고)에 걸려, 대형 오염 지역(화성 41590 등 월 수천 건)에서
+ * 실제 삭제 건수보다 작게 표시되는 문제가 있다(DELETE 자체는 전부 삭제되므로 자가치유엔
+ * 영향 없으나 보고 수치가 부정확). count 방식은 행을 되받지 않아 상한과 무관하고 더 가볍다.
+ */
+export async function resetRegionCache(
+  supabase: SupabaseClient,
+  lawdCd: string,
+  buildingType: BuildingType = "아파트"
+): Promise<{ deals: number; monthlyStats: number; cacheStatus: number }> {
+  const { count: dealsCount, error: dealsErr } = await supabase
+    .from("deals")
+    .delete({ count: "exact" })
+    .eq("lawd_cd", lawdCd)
+    .eq("building_type", buildingType);
+  if (dealsErr) throw dealsErr;
+
+  const { count: statsCount, error: statsErr } = await supabase
+    .from("monthly_stats")
+    .delete({ count: "exact" })
+    .eq("lawd_cd", lawdCd)
+    .eq("building_type", buildingType);
+  if (statsErr) throw statsErr;
+
+  const { count: cacheCount, error: cacheErr } = await supabase
+    .from("fetch_cache_status")
+    .delete({ count: "exact" })
+    .eq("lawd_cd", lawdCd)
+    .eq("building_type", buildingType);
+  if (cacheErr) throw cacheErr;
+
+  return {
+    deals: dealsCount ?? 0,
+    monthlyStats: statsCount ?? 0,
+    cacheStatus: cacheCount ?? 0,
+  };
+}
+
 export { EMPTY_MONTH };
