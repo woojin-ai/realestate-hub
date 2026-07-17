@@ -8,7 +8,7 @@ import Link from "next/link";
 // 정식 법률 검토를 다시 받는 것을 권장한다. (기획팀, 2026-07-17)
 
 export const metadata: Metadata = {
-  title: "개인정보처리방침 | 부동산 실거래가 대시보드",
+  title: "개인정보처리방침",
   description:
     "부동산 실거래가 대시보드의 개인정보 수집·이용 및 쿠키, 광고 게재와 관련된 개인정보처리방침을 안내합니다.",
 };

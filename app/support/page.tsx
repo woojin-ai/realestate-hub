@@ -9,7 +9,7 @@ import ContactForm from "@/components/ContactForm";
 // 계산기 허브와 Resend 계정/키를 공유하되 제목 접두어로 사이트를 구분한다.
 
 export const metadata: Metadata = {
-  title: "문의하기 | 부동산 실거래가 대시보드",
+  title: "문의하기",
   description:
     "부동산 실거래가 대시보드 이용 중 자주 묻는 질문(FAQ)과 오류 제보·문의 방법을 안내합니다.",
 };

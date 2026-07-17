@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "소개 | 부동산 실거래가 대시보드",
+  title: "소개",
   description:
     "국토교통부 실거래가 공개시스템 공공데이터를 기반으로 아파트 매매·전세 실거래가를 조회하고 AI 맞춤 추천을 받을 수 있는 부동산 실거래가 대시보드를 소개합니다.",
 };

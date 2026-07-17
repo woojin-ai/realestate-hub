@@ -8,7 +8,7 @@ import Link from "next/link";
 // 정식 법률 검토를 받는 것을 권장한다. (기획팀, 2026-07-17)
 
 export const metadata: Metadata = {
-  title: "이용약관 | 부동산 실거래가 대시보드",
+  title: "이용약관",
   description:
     "부동산 실거래가 대시보드 서비스 이용조건, 데이터 정확성에 대한 면책, 이용자의 권리·의무를 안내하는 이용약관입니다.",
 };
