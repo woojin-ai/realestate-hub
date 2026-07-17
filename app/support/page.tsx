@@ -1,27 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import ContactForm from "@/components/ContactForm";
 
 // 내부 기록용 메모(사이트 비노출):
 // CS팀 FAQ 초안(docs/cs/2026-07-15-faq-draft.md)과 이용약관/개인정보처리방침 톤을 기준으로
 // 실제 구현 코드(app/page.tsx, app/api/recommend/route.ts, lib/recommender.ts) 확인 후 작성.
-// 문의 채널은 정식 수신 백엔드(이메일 발송 서비스 등)가 아직 없어 mailto 링크로 우선 제공한다.
-
-const SUPPORT_EMAIL = "sss159228@gmail.com";
-
-const MAILTO_SUBJECT = "[부동산 실거래가 대시보드] 문의";
-const MAILTO_BODY = [
-  "아래 항목을 채워서 보내주시면 확인이 빠릅니다.",
-  "",
-  "1) 조회한 지역(시/도, 구/시):",
-  "2) 건물 유형(아파트/빌라/단독) 및 거래 유형(매매/전세):",
-  "3) 어떤 화면/기능에서 발생했는지:",
-  "4) 문의 내용:",
-  "",
-].join("\n");
-
-const MAILTO_HREF = `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
-  MAILTO_SUBJECT
-)}&body=${encodeURIComponent(MAILTO_BODY)}`;
+// 2026-07-17: 문의 채널을 mailto 링크에서 실제 접수 폼(/api/contact, Resend 발송)으로 전환.
+// 계산기 허브와 Resend 계정/키를 공유하되 제목 접두어로 사이트를 구분한다.
 
 export const metadata: Metadata = {
   title: "문의하기 | 부동산 실거래가 대시보드",
@@ -177,17 +162,14 @@ export default function SupportPage() {
           문의 / 오류 제보
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-gray-600 sm:text-base">
-          아직 별도의 문의 접수 시스템이 없어, 아래 버튼을 누르면 이메일 앱이
-          열리며 문의 내용을 바로 작성할 수 있습니다. 데이터 오류를 제보해
-          주실 때는 (1) 조회한 지역, (2) 건물 유형·거래 유형, (3) 어떤 화면에서
-          발생했는지를 함께 적어주시면 확인이 훨씬 빨라집니다.
+          아래 양식을 작성해 보내주시면 담당자가 확인 후 입력하신 이메일로
+          답변드립니다. 데이터 오류를 제보해 주실 때는 (1) 조회한 지역, (2)
+          건물 유형·거래 유형, (3) 어떤 화면에서 발생했는지를 함께 적어주시면
+          확인이 훨씬 빨라집니다.
         </p>
-        <a
-          href={MAILTO_HREF}
-          className="mt-4 inline-flex items-center justify-center rounded-lg bg-brand px-6 py-2.5 text-sm text-white hover:bg-[#303f9f]"
-        >
-          문의하기 ({SUPPORT_EMAIL})
-        </a>
+        <div className="mt-4">
+          <ContactForm />
+        </div>
       </section>
 
       <div className="mt-10">
