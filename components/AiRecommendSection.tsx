@@ -197,7 +197,7 @@ export default function AiRecommendSection({
           <div>
             <h3 className="text-base font-bold text-brand-dark">AI 맞춤 추천</h3>
             <p className="text-sm text-gray-500">
-              예산·역세권·신축 선호도로 이 지역 단지를 점수화해 추천해요
+              가격·역세권·신축·평지 선호도로 이 지역 단지를 점수화해 추천해요
             </p>
           </div>
         </div>
@@ -237,7 +237,7 @@ export default function AiRecommendSection({
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <h3 className="text-base font-bold text-brand-dark">
-          ✨ AI 맞춤 추천 <span className="text-xs text-gray-400 font-normal">(예산·역세권·신축 기준)</span>
+          ✨ AI 맞춤 추천 <span className="text-xs text-gray-400 font-normal">(가격·역세권·신축·평지 기준)</span>
         </h3>
         <button
           type="button"
