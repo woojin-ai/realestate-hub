@@ -31,3 +31,18 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+  크로스 사이트 내비게이션 FAB — 입력 필드 포커스 시 자동 숨김(JS 없이 :has()만 사용).
+  계산기 허브 design/cross-site-nav-widget-spec.md §5-3 이식. 원본 규칙은
+  `main input:focus`처럼 <main> 안쪽으로 스코프했으나, 이 프로젝트는 app/ 전체에
+  <main> 요소가 없어(grep으로 확인) 그대로 복사하면 영구히 매치되지 않는 죽은
+  규칙이 된다 — <main> 조건 없이 페이지 전체 입력 포커스를 감지하도록 재계산해
+  포팅한다. 가상 키보드가 올라와 화면이 가장 좁아지는 순간 FAB가 지역선택
+  드롭다운 등과 겹칠 위험을 줄이기 위한 조치.
+*/
+body:has(input:focus, select:focus, textarea:focus) .cross-site-fab {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
