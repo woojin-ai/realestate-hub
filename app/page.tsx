@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import RegionSelector from "@/components/RegionSelector";
 import BuildingTypeToggle from "@/components/BuildingTypeToggle";
 import DealTypeTabs from "@/components/DealTypeTabs";
@@ -183,7 +184,20 @@ export default function DashboardPage() {
       </div>
 
       <footer className="text-center text-xs text-gray-400 py-6">
-        데이터 출처: 국토교통부 실거래가 공개시스템(공공데이터포털)
+        <p>데이터 출처: 국토교통부 실거래가 공개시스템(공공데이터포털)</p>
+        <nav className="mt-2 flex items-center justify-center gap-3">
+          <Link href="/privacy" className="hover:text-gray-600 hover:underline">
+            개인정보처리방침
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link href="/terms" className="hover:text-gray-600 hover:underline">
+            이용약관
+          </Link>
+          <span aria-hidden="true">·</span>
+          <Link href="/about" className="hover:text-gray-600 hover:underline">
+            소개
+          </Link>
+        </nav>
       </footer>
     </>
   );
