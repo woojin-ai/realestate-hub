@@ -197,6 +197,10 @@ export default function DashboardPage() {
           <Link href="/about" className="hover:text-gray-600 hover:underline">
             소개
           </Link>
+          <span aria-hidden="true">·</span>
+          <Link href="/support" className="hover:text-gray-600 hover:underline">
+            문의하기
+          </Link>
         </nav>
       </footer>
     </>
