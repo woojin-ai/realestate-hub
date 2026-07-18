@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AptStat } from "@/lib/analyzer";
 import { formatPrice } from "@/lib/analyzer";
+import type { DealType } from "@/lib/types";
 
 interface AptDetailModalProps {
   apt: AptStat; // 표시할 단지(선택된 row). 부모가 selected !== null일 때만 마운트한다.
@@ -18,6 +19,12 @@ interface AptDetailModalProps {
    */
   lawdCd: string;
   gu: string;
+  /**
+   * 현재 보고 있는 거래유형. "전세"일 때만 평수별 표 아래에 집계 기준 안내(평균=신규 계약만,
+   * 건수=갱신 포함 전체)를 노출한다. 매매에는 신규/갱신 구분 자체가 없어 표시하지 않는다.
+   * 값이 없으면 안내를 표시하지 않는다(기존 동작과 동일).
+   */
+  dealType?: DealType;
 }
 
 // 위치 섹션(design §10·§13) 독립 로딩 상태 + 응답 계약(design §14-2).
@@ -140,6 +147,7 @@ export default function AptDetailModal({
   budgetMax,
   lawdCd,
   gu,
+  dealType,
 }: AptDetailModalProps) {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -445,6 +453,16 @@ export default function AptDetailModal({
             </tbody>
           </table>
         </div>
+
+        {/* 전세 집계 기준 공시: 상단 meta의 "전체 N건 · 평균 …"과 평수별 표의 평균가/거래건수가
+            같은 모집단이 아니다(평균=신규 계약만, 건수=갱신 포함 전체). 두 표시를 한 번에 덮도록
+            평수별 표 바로 아래 1곳에만 둔다. 매매 탭에서는 노출하지 않는다. */}
+        {dealType === "전세" && (
+          <p className="mt-2 text-[11px] md:text-xs text-gray-500 leading-relaxed">
+            전세 평균가는 신규 계약 기준으로 집계되며, 갱신 계약은 평균에서 제외됩니다.
+            거래건수는 갱신을 포함한 전체 신고 건수입니다.
+          </p>
+        )}
 
         {/* 구분선 + 위치 섹션(design §9·§10·§13). 평수별 표 아래에 추가. */}
         <hr className="my-4 border-t border-gray-100" />

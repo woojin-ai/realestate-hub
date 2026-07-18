@@ -78,7 +78,15 @@ export default function DealsTable({ rows, dealType, lawdCd, gu }: DealsTablePro
 
   return (
     <section className="bg-white rounded-xl shadow-sm p-4 md:p-5 mb-5">
-      <h3 className="text-sm text-gray-600 mb-4">아파트 목록</h3>
+      <h3 className="text-sm text-gray-600 mb-2">아파트 목록</h3>
+      {/* 전세 집계 기준 공시: 같은 행의 '평균 전세가'(신규 계약만)와 '거래건수'(갱신 포함 전체)는
+          모집단이 다르다. 두 값이 나란히 보이는 표라 헤더 바로 위에 고지한다(매매 탭은 구분 없음). */}
+      {dealType === "전세" && (
+        <p className="text-xs text-gray-500 leading-relaxed mb-3">
+          평균 전세가는 신규 계약만으로 집계되며, 거래건수는 갱신을 포함한 전체 신고
+          건수입니다. 두 값의 집계 대상이 달라 거래건수보다 적은 건이 평균에 쓰일 수 있습니다.
+        </p>
+      )}
       <div className="overflow-x-auto">
         <div className="max-h-[600px] overflow-y-auto">
           <table className="w-full border-collapse text-xs md:text-sm">
@@ -168,6 +176,7 @@ export default function DealsTable({ rows, dealType, lawdCd, gu }: DealsTablePro
           onClose={() => setSelected(null)}
           lawdCd={lawdCd ?? ""}
           gu={gu}
+          dealType={dealType}
         />
       )}
     </section>

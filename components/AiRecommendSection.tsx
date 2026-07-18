@@ -348,6 +348,7 @@ export default function AiRecommendSection({
           onClose={() => setSelected(null)}
           lawdCd={lawdCd ?? ""}
           gu={gu}
+          dealType={dealType}
           budgetMax={
             lastSubmitted?.budgetType === "max" && lastSubmitted?.budget != null
               ? lastSubmitted.budget
