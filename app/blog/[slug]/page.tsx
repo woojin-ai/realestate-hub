@@ -8,11 +8,12 @@ import {
   getBlogPostBySlug,
   getReadingMinutes,
 } from "@/lib/blog";
-import BlogHeader from "@/components/blog/BlogHeader";
 import BlogBody from "@/components/blog/BlogBody";
 import CategoryBadge from "@/components/blog/CategoryBadge";
 
 // docs/design/blog.md §2 상세 페이지. 레이아웃/문구는 구성안 그대로(브레드크럼→제목/메타→콜아웃→본문→CTA+면책 반복→목록 복귀).
+// 헤더: 자체 BlogHeader 대신 전역 SiteHeader(app/layout.tsx)를 사용한다(2026-07-18,
+// 블로그/소개/문의하기 헤더 내비 승격 작업 — components/SiteHeader.tsx 참고).
 
 export function generateStaticParams() {
   return blogPosts.map((post) => ({ slug: post.slug }));
@@ -47,7 +48,6 @@ export default async function BlogPostPage({
 
   return (
     <>
-      <BlogHeader />
       <div className="max-w-3xl mx-auto px-4 py-8">
         <nav className="text-xs text-gray-400" aria-label="브레드크럼">
           <Link href="/" className="hover:text-brand">

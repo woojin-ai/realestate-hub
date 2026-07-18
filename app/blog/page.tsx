@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { getActiveBlogCategories, getBlogPosts } from "@/lib/blog";
-import BlogHeader from "@/components/blog/BlogHeader";
 import BlogList from "@/components/blog/BlogList";
 
 // docs/design/blog.md §1 목록 페이지. 레이아웃/문구는 구성안 그대로.
+// 헤더: 자체 BlogHeader 대신 전역 SiteHeader(app/layout.tsx)를 사용한다(2026-07-18,
+// 블로그/소개/문의하기 헤더 내비 승격 작업 — components/SiteHeader.tsx 참고).
 
 export const metadata: Metadata = {
   title: "블로그",
@@ -17,7 +18,6 @@ export default function BlogIndexPage() {
 
   return (
     <>
-      <BlogHeader />
       <div className="max-w-3xl mx-auto px-4 py-8">
         <h1 className="text-2xl font-bold text-gray-900 sm:text-[2rem]">블로그</h1>
         <p className="mt-2 text-sm text-gray-500">

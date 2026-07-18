@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { SITE_URL } from "@/lib/site";
 import CrossSiteNav from "@/components/CrossSiteNav";
+import SiteHeader from "@/components/SiteHeader";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -58,6 +59,12 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-zinc-50">
+        {/*
+          공통 헤더 내비게이션(블로그/소개/문의하기, 2026-07-18 사용자 피드백 대응).
+          홈("/")에서는 SiteHeader가 자기 자신을 렌더링하지 않는다(app/page.tsx의
+          히어로 배너가 대신 HeaderNavLinks를 통합) — components/SiteHeader.tsx 상단 주석 참고.
+        */}
+        <SiteHeader />
         {children}
         {/*
           탭 순서상 본문 다음에 마운트(계산기 허브 design/cross-site-nav-widget-spec.md §9).

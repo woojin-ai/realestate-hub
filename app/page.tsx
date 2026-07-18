@@ -10,6 +10,7 @@ import SummaryCards from "@/components/SummaryCards";
 import MonthlyChart from "@/components/MonthlyChart";
 import DealsTable from "@/components/DealsTable";
 import AiRecommendSection from "@/components/AiRecommendSection";
+import { HeaderNavLinks } from "@/components/SiteHeader";
 import type { BuildingType, DealType, DealsApiResponse, DealsApiError } from "@/lib/types";
 
 type FetchStatus = "idle" | "loading" | "ready" | "error";
@@ -89,7 +90,7 @@ export default function DashboardPage() {
 
   return (
     <>
-      <header className="relative overflow-hidden bg-gradient-to-br from-brand-dark to-[#283593] text-white px-4 py-3 md:px-8 md:py-5 flex items-center gap-3">
+      <header className="relative overflow-hidden bg-gradient-to-br from-brand-dark to-[#283593] text-white px-4 py-3 md:px-8 md:py-5">
         <div className="hidden md:block absolute inset-y-0 right-0 w-[46%] lg:w-[40%] pointer-events-none">
           <Image
             src="/images/hero-illustration.png"
@@ -101,12 +102,19 @@ export default function DashboardPage() {
           />
           <div className="absolute inset-0 bg-gradient-to-r from-brand-dark via-brand-dark/70 to-transparent" />
         </div>
-        <span className="relative z-10 text-2xl md:text-3xl">🏘️</span>
-        <div className="relative z-10">
-          <h1 className="text-base md:text-2xl font-bold">부동산 실거래가 대시보드</h1>
-          <p className="text-xs md:text-sm opacity-80">
-            국토교통부 공공데이터 기반 아파트 실거래가 조회 (빌라·단독 조회 준비중)
-          </p>
+        {/* 내비게이션 메뉴(블로그/소개/문의하기)를 기존 히어로 배너 안에 통합(2026-07-18).
+            데스크톱: 타이틀 아래 별도 줄. 히어로 일러스트는 우측 46%/40%에만 있어 겹치지 않음. */}
+        <div className="relative z-10 flex flex-col gap-2">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl md:text-3xl">🏘️</span>
+            <div>
+              <h1 className="text-base md:text-2xl font-bold">부동산 실거래가 대시보드</h1>
+              <p className="text-xs md:text-sm opacity-80">
+                국토교통부 공공데이터 기반 아파트 실거래가 조회 (빌라·단독 조회 준비중)
+              </p>
+            </div>
+          </div>
+          <HeaderNavLinks />
         </div>
       </header>
 
