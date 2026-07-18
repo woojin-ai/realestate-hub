@@ -271,3 +271,131 @@ interface CalloutProps {
 
 **마스터 확인 필요**
 - 없음 — 신규 색은 기존 팔레트(브랜드/상승/하락/재건축 경고)와 겹치지 않는 3색(틸/호박/퍼플)만 추가했고, 4장에서 근거를 남겼다. 이견 있으면 회수 가능.
+
+---
+
+## 7. [2026-07-18 추가] "참고 기사" 출처 링크 블록 — 시황 브리핑(뉴스 종합) 전용
+
+- 근거: `docs/planning/content-strategy.md` §7(뉴스 종합 시황 브리핑 스펙). §7-6에서 마스터가 4건 모두 승인: ① 배지 라벨 "월간 시황"→"시황 브리핑" 변경, ② 발행 주기 주 1회, ③ `BlogSection` 신규 타입 추가, ④ 첫 1~2편은 마스터 직접 검수.
+- 이 장은 content-strategy.md §7-5 "디자인팀에게 넘길 것"에 대한 디자인팀의 응답이다. 레이아웃·타입 스펙만 다루며 코드는 건드리지 않는다(개발팀 몫).
+- 범위: 새 카테고리·새 페이지 없음 — 기존 `/blog/[slug]` 상세 페이지(§2)에 조건부로 등장하는 블록 하나, 그리고 `market` 배지 라벨 텍스트 변경뿐.
+
+### 7-1. 배치 위치 — 하단 CTA 박스보다 앞, 본문 바로 다음
+
+```
+[Header]
+[페이지 컨테이너]
+  [Breadcrumb] · [H1] · [메타 줄]
+  [도입부 + 면책 콜아웃]
+  ──────────────────────────────
+  [본문 h2/h3 + 문단 + 표]                          ← 기존 §2-1
+  [참고 기사 블록]                                   ← 신규 (7-2). sourceLinks 섹션이 있는 글에만 등장
+  ──────────────────────────────
+  [하단 CTA 박스]                                   ← 기존 §2-4, 변경 없음
+  [← 블로그 목록으로]                               ← 기존 §2-5, 변경 없음
+[Footer]
+```
+
+**결정: 참고 기사 블록은 본문 직후·CTA 박스 바로 앞에 둔다.** (CTA 뒤·목록복귀 앞 배치도 검토했으나 기각 — 이유는 아래.)
+
+1. **편집상 이유**: "참고 기사"는 본문이 인용한 사실의 근거를 밝히는, 사실상 본문의 연장(각주)이다. 사이트 자체 CTA("대시보드에서 조회하기")는 본문과 무관한 서비스 유도 요소다. 독자가 방금 읽은 사실 진술의 출처를 확인하려는 흐름을 CTA가 끊고 들어오게 하는 것보다, 본문 → 출처 → (그 다음에) 사이트 CTA 순이 자연스럽다.
+2. **투명성 우선순위**: content-strategy.md 7-3-9("출처 목록 없는 뉴스 종합 글은 발행하지 않는다")·7-6("첫 1~2편은 마스터가 참고 기사 링크 실제 클릭 유효성까지 검수")은 이 블록을 사실상 발행 게이트로 취급한다. CTA 박스(카드형·그림자·중앙 정렬 버튼)는 시각적으로 "여기서 끝"이라는 신호가 강해, 그 뒤에 출처를 두면 일부 독자가 못 보고 이탈할 위험이 있다. 본문 바로 다음이 가장 눈에 띄는 자리다.
+3. **구현 정합성**: 7-5에서 채택하는 `sourceLinks`는 `BlogSection` 유니온 값이라 `post.body` 배열 안에 들어간다. 현재 `app/blog/[slug]/page.tsx`는 `<BlogBody sections={post.body} />`를 통째로 렌더한 다음에야 CTA `<div>`를 렌더하므로, `body` 배열의 마지막 항목으로 `sourceLinks`를 넣기만 하면 "본문 다음, CTA 이전"이 별도 분기 로직 없이 자동으로 성립한다. 반대로 CTA 뒤에 두려면 `page.tsx`가 `body` 배열에서 `sourceLinks` 섹션만 골라내 CTA 밑에 따로 렌더하는 특수 처리가 필요해져, `BlogBody`가 배열을 순서대로 그대로 매핑하는 현재의 단순한 구조(`lib/blog.ts` 상단 주석 "렌더가 순수 switch/map 매핑" 원칙)를 깨게 된다. 편집상 이유와 구현 단순성이 같은 결론을 가리켜 이 배치로 정했다.
+- market(시황 브리핑) 외 카테고리는 `body` 배열에 애초에 `sourceLinks` 섹션을 넣지 않으므로 이 블록 자체가 렌더되지 않는다 — "노출 조건" 같은 별도 분기 불필요.
+
+### 7-2. 레이아웃 — 절제된 리스트(카드형 아님)
+
+```
+<div class="mt-10 pt-6 border-t border-gray-100">
+  <h2 class="text-xs font-semibold text-gray-500 mb-3">참고 기사</h2>
+  <ul class="list-none space-y-2.5">
+    <li class="text-sm leading-relaxed text-gray-500">
+      <span class="text-gray-400">{매체명}</span>
+      <span aria-hidden="true"> · </span>
+      <a href="{원문 URL}" target="_blank" rel="noopener noreferrer"
+          class="text-gray-600 underline underline-offset-2 hover:text-brand">
+        {기사 제목}
+      </a>
+      <span class="sr-only">(새 탭에서 열림)</span>
+      <!-- publishedAt이 있을 때만 -->
+      <span aria-hidden="true"> · </span>
+      <span class="text-gray-400">{발행일 — formatBlogDateKo(publishedAt)}</span>
+    </li>
+    <!-- items 배열 항목별 반복 -->
+  </ul>
+</div>
+```
+
+- **카드형 대신 리스트를 택한 이유**: 이 블록의 성격은 카드로 강조할 "콘텐츠"가 아니라 각주·인용목록에 가깝다. `BlogPostCard`(목록 페이지 카드, 흰 배경 + `shadow-sm`)처럼 꾸미면 참고 기사가 본문과 동급의 콘텐츠처럼 보여 위계가 흐트러진다. 콜아웃과 어울리는 절제된 톤을 유지한다.
+- **소제목 스타일 근거**: `text-xs font-semibold text-gray-500`는 새로 만든 값이 아니라 `components/CrossSiteNav.tsx` 모바일 패널의 "관련 서비스" 라벨(`PanelRow` 상단)과 동일한 클래스 조합이다 — "리스트 위에 붙는 보조 라벨"이라는 같은 역할을 이 사이트가 이미 이 스타일로 쓰고 있어 그대로 재사용했다. 다만 시맨틱 태그는 `<h2>`를 쓴다: 본문 소제목(`BlogBody`의 `heading` 타입)도 `<h2>`이므로 "참고 기사"도 문서 구조상 같은 레벨의 독립 섹션이다. 시각적으로는 훨씬 작게(본문 소제목의 `text-lg md:text-xl font-bold text-gray-900` 대비) 눌러 "본문과 다른 부속 정보"라는 인상을 주되, 스크린리더 사용자가 헤딩 탐색으로 이 섹션에 바로 점프할 수 있도록 시맨틱은 유지한다.
+- **구분선**: `border-t border-gray-100` + `pt-6 mt-10`으로 본문 마지막 문단과 분리한다. 콜아웃의 `border-l-4 border-[#c62828]`(좌측·빨강)와는 위치·색이 모두 달라 혼동되지 않는다.
+- **목록 마커 없음**: `list-none` — 본문 안내용 `list` 섹션(글머리 기호 있는 안내 목록, `list-disc`)과 시각적으로 구분해 "따라 하기용 목록"이 아니라 "인용 출처 목록"임을 형태로도 나타낸다.
+- **구분자 `·`**: 새 기호를 쓰지 않고 이 페이지가 메타 줄에 이미 쓰는 것과 동일한 패턴(`app/blog/[slug]/page.tsx`의 `<span aria-hidden="true">·</span>`, 공백 포함 `" · "`)을 그대로 재사용했다.
+- **제목 줄바꿈**: `line-clamp` 미적용 — 목록 카드(`BlogPostCard`)의 제목은 클릭 전 미리보기라 2줄 요약이 맞지만, 이 항목은 클릭 유도 자체가 목적(출처 확인)이라 제목 전체가 다 보여야 한다.
+- **복잡한 구조 금지**: §3-3(콜아웃 공통 규칙)과 같은 원칙 — 리스트 항목 안에 썸네일 이미지 등 추가 레이아웃을 넣지 않는다.
+
+### 7-3. 접근성 — "새 탭에서 열림" sr-only 패턴 재사용
+
+- `components/CrossSiteNav.tsx`의 `PanelRow`가 쓰는 방식을 그대로 가져온다: 링크의 보이는 텍스트(기사 제목)는 그대로 두고, 그 뒤에 `<span class="sr-only">(새 탭에서 열림)</span>`을 붙인다(코드까지 동일하게 재사용 — 앞뒤 공백 없이).
+- `CrossSiteNav`에는 이 문구를 넣는 방식이 두 가지 있다 — 데스크톱 `RailItem`은 `aria-label` 속성 안에 문구 전체를 통짜로 넣고, 모바일 `PanelRow`는 `sr-only` 스팬을 별도로 붙인다. 이 블록은 후자(`PanelRow` 방식)를 쓴다. 이유: `RailItem`의 링크는 시각 텍스트가 축약 라벨(2~4자)이라 `aria-label`로 전체를 새로 정의해도 정보 손실이 없지만, 참고 기사 링크는 시각 텍스트 자체가 이미 완전한 문장(기사 제목)이라 `aria-label`로 통째로 덮어쓰면 스크린리더 사용자가 듣는 정보가 오히려 줄어든다. 시각 텍스트를 그대로 살리고 `sr-only`로 "새 탭" 안내만 보충하는 `PanelRow` 패턴이 이 경우에 맞다.
+- `target="_blank" rel="noopener noreferrer"`는 content-strategy.md §7-5 요구사항대로 필수.
+
+### 7-4. 카테고리 배지 라벨 변경 — `market`: "월간 시황" → "시황 브리핑"
+
+- 배지 색상(`text: #6a1b9a`, `bg: #f3e5f5`, 본 문서 §4)은 **변경 없음**.
+- 라벨 텍스트만 변경: `lib/blog.ts`의 `BLOG_CATEGORY_LABEL.market` 값을 `"월간 시황"` → `"시황 브리핑"`으로(content-strategy.md §7-0·§7-6에서 마스터 승인 완료된 사항).
+- 이 라벨은 카테고리 배지(`CategoryBadge.tsx`)·목록 페이지 필터 탭(`CategoryTabs.tsx`)·블로그 상세 브레드크럼(`app/blog/[slug]/page.tsx`의 `BLOG_CATEGORY_LABEL[post.category]`)이 전부 같은 딕셔너리 하나를 참조한다(3곳 모두 확인함). `lib/blog.ts` 한 곳만 고치면 세 군데 모두 자동 반영되므로 컴포넌트 코드 변경은 불필요하다.
+
+### 7-5. `BlogSection` 신규 타입 — `sourceLinks` 최종 스펙
+
+content-strategy.md §7-5가 제안한 형태:
+```
+{ type: "sourceLinks"; items: { outlet: string; title: string; url: string }[] }
+```
+
+검토 결과 — **3개 필수 필드는 그대로 채택**하고, `publishedAt` **1개를 선택 필드로 추가**한다:
+
+```ts
+export type BlogSection =
+  | { type: "paragraph"; text: string }
+  | { type: "heading"; text: string }
+  | { type: "list"; ordered?: boolean; items: string[] }
+  | { type: "callout"; variant: "info" | "warning"; text: string }
+  | { type: "sourceNote"; asOfDate: string }
+  | {
+      type: "sourceLinks";
+      items: {
+        outlet: string; // 매체명. 필수 — "언론 보도에 따르면" 식 출처 흐리기 금지(content-strategy §7-3-1)와 직결
+        title: string; // 기사 제목. 필수 — 클릭 전 내용을 가늠할 최소 정보
+        url: string; // 원문 링크. 필수 — 이 필드 없이는 게시 자체가 불가(§7-3-9)
+        publishedAt?: string; // 기사 발행일 "YYYY-MM-DD". 선택
+      }[];
+    };
+```
+
+- **필드를 줄이는 방향은 기각**: 매체명을 빼면 §7-3-1(출처 흐리기 금지) 위반이고, 제목을 빼면 독자가 클릭 전 내용을 전혀 가늠할 수 없어 실용성이 없다. 3요소는 최소선이자 충분선이다.
+- **`publishedAt`을 선택 필드로 추가하는 이유**: 이 카테고리는 "최근 7일 이내" 뉴스만 소재로 쓴다는 신선도 자체가 존재 이유다(content-strategy §7-2 1단계). 참고 기사 목록에 발행일이 있으면 독자가 링크를 열지 않고도 "정말 최근 기사인가"를 바로 확인할 수 있어, 7-2 5단계가 강조하는 "출처 투명성"을 한 번 더 강화한다. `sourceNote` 섹션이 이미 `asOfDate`로 날짜를 표기하는 선례가 있어 이 데이터 모델에 낯선 개념도 아니다.
+- **필수가 아니라 선택인 이유**: content-strategy가 못박은 요건은 "3요소 필수"(§7-5)·"링크 필수"(§7-3-9)이지 "날짜 필수"가 아니다. `NaverSearch-search_news` 응답에 발행일(pubDate)이 포함돼 있어 자동화 세션이 채우기 어렵지는 않겠지만, 기획팀이 요구하지 않은 필드를 디자인팀이 임의로 필수화하지 않는다 — 값이 없어도 발행에 지장이 없도록 선택으로 둔다.
+- 렌더링: `publishedAt`이 있으면 기존 유틸 `formatBlogDateKo`(`lib/blog.ts`, 신규 유틸 불필요)로 포맷해 매체명 뒤에 이어 붙이고, 없으면 그 부분을 통째로 생략한다(7-2 마크업의 `<!-- publishedAt이 있을 때만 -->` 참고).
+
+### 7-6. 본문 중간 뉴스 직접인용 — 별도 장치 없이 평문 처리
+
+- content-strategy.md §7-2 4단계("15단어 이내 직접인용 + 매체명")가 본문 문단 중간에 등장할 때도 **이탤릭체·별도 컴포넌트를 새로 만들지 않는다.**
+- 이유: `lib/blog.ts`의 `paragraph` 섹션은 의도적으로 순수 문자열(`text: string`)이며, 이 프로젝트는 마크다운 파서나 `dangerouslySetInnerHTML`을 쓰지 않는 것이 설계 원칙이다(XSS 위험 차단 목적, `lib/blog.ts` 상단 주석). 인용구 일부에만 이탤릭을 입히려면 문자열 일부를 별도 태그로 감싸는 리치텍스트 구조가 있어야 하는데, 이는 그 원칙과 정면으로 부딪힌다.
+- 대신 **인용부호(따옴표)와 매체명 자체가 충분한 시각·의미적 구분 장치**다. 예: `OO경제는 "이번 달 거래량이 전월 대비 늘었다"라고 전했다.` — 이 문장을 통째로 기존 `{ type: "paragraph"; text: string }`에 담으면 끝난다.
+- **결론: 개발 변경 불필요.** 이 규칙은 순수하게 집필 단계의 문장 작성 규칙이며, 기존 `paragraph` 타입과 `BlogBody`의 렌더 로직을 그대로 쓴다.
+
+### 7-7. 다른 팀 전달 사항 (추가분)
+
+**개발팀**
+- `lib/blog.ts`의 `BlogSection` 유니온에 7-5 스펙 그대로 `sourceLinks` 추가.
+- `BlogBody.tsx`의 switch문에 `case "sourceLinks"`: 7-2 마크업 그대로 추가(`formatBlogDateKo`는 이미 `lib/blog.ts`에 있는 기존 유틸 재사용).
+- `BLOG_CATEGORY_LABEL.market`: `"월간 시황"` → `"시황 브리핑"` 1줄 변경(7-4). `BLOG_CATEGORY_BADGE.market` 색상 값은 변경 없음.
+- `sourceLinks` 섹션은 글의 `body` 배열 **맨 마지막 요소**로 넣을 것(7-1의 배치 근거) — 그래야 본문 뒤·CTA 앞에 자동으로 위치한다.
+- 컴포넌트를 `BlogBody.tsx` 안에 인라인으로 둘지 `components/blog/SourceLinks.tsx`로 분리할지는 개발팀 재량(이 문서는 마크업·스타일만 규정).
+
+**기획팀 확인/제공 요청**
+- 없음. content-strategy.md §7-5가 못박은 3요소(매체명·제목·url)를 그대로 채택했고, 추가한 `publishedAt`은 선택 필드라 콘텐츠 준비 부담을 늘리지 않는다.
+
+**마스터 확인 필요**
+- 없음. 이 장의 결정은 모두 content-strategy.md §7-6에서 마스터가 이미 승인한 4개 항목(라벨 변경·주 1회 발행·신규 섹션 타입·마스터 첫 검수) 범위 안에서 디자인팀 재량으로 처리했다. `publishedAt` 선택 필드는 기존 3요소 필수 요건을 그대로 둔 채 얹는 하위호환 확장이라 별도 승인 없이 진행한다(이견 있으면 회수 가능).
