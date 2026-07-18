@@ -14,7 +14,9 @@ export const BLOG_CATEGORY_LABEL: Record<BlogCategory, string> = {
   guide: "용어·제도",
   insight: "지역별 인사이트",
   howto: "활용법",
-  market: "월간 시황",
+  // "월간 시황"→"시황 브리핑": content-strategy.md §7-0·§7-6(마스터 승인), docs/design/blog.md §7-4.
+  // 실제 발행 주기가 "주 1회"로 바뀌어 "월간" 표기가 주기와 어긋나 변경. 배지 색(#6a1b9a/#f3e5f5)은 불변.
+  market: "시황 브리핑",
 };
 
 /** 카테고리 배지 색상 (docs/design/blog.md §4 팔레트 그대로). 브랜드/상승/하락/재건축 경고 색과 겹치지 않는 4색. */
@@ -31,7 +33,18 @@ export type BlogSection =
   | { type: "heading"; text: string } // <h2> 소제목
   | { type: "list"; ordered?: boolean; items: string[] } // ul/ol
   | { type: "callout"; variant: "info" | "warning"; text: string } // 면책/안내 박스 (docs/design/blog.md §3)
-  | { type: "sourceNote"; asOfDate: string }; // 데이터 출처·기준일 캡션 (docs/design/blog.md §5). guide 글은 보통 미사용.
+  | { type: "sourceNote"; asOfDate: string } // 데이터 출처·기준일 캡션 (docs/design/blog.md §5). guide 글은 보통 미사용.
+  | {
+      // 참고 기사(출처) 목록. docs/design/blog.md §7-5 최종 스펙(content-strategy.md §7-5 제안 + publishedAt 선택 필드 추가).
+      // "시황 브리핑"(market) 전용 — 뉴스 종합 글의 body 배열 맨 마지막 요소로 넣는다(§7-1: CTA 앞에 자동 배치).
+      type: "sourceLinks";
+      items: {
+        outlet: string; // 매체명. 필수 — 출처 흐리기 금지(content-strategy §7-3-1)
+        title: string; // 기사 제목. 필수
+        url: string; // 원문 링크. 필수 — 없으면 게시 불가(§7-3-9)
+        publishedAt?: string; // 기사 발행일 "YYYY-MM-DD". 선택
+      }[];
+    };
 
 export interface BlogPost {
   /** URL 마지막 세그먼트. 영문 소문자-하이픈 */
@@ -642,6 +655,120 @@ export const blogPosts: BlogPost[] = [
           "경로 경사의 오르막·내리막은 고도차 기준이고, '측정 불가'는 역 좌표 미확인이라는 표시일 뿐이다.",
           "'없음'·빈 항목은 오류나 나쁜 신호가 아니라 데이터 등록 상태·반경 조건의 결과다.",
           "위치 정보와 실거래가는 별개 출처이므로, 둘을 인과로 엮어 시세를 설명하거나 예측하지 않는다.",
+        ],
+      },
+    ],
+  },
+  {
+    slug: "seoul-outer-district-price-briefing-2026-07-18",
+    title: "이번 주 시황 브리핑 — 서울 아파트값 상승세, 자치구별로는 온도차",
+    category: "market",
+    publishedAt: "2026-07-18",
+    summary:
+      "이번 주(7월 13일 기준) 한국부동산원 통계와 여러 매체 보도를 소재로, 서울 성북구·구로구·노원구의 상승 흐름을 이 대시보드 실거래가 데이터로 교차검증했습니다.",
+    body: [
+      {
+        type: "paragraph",
+        text: "이번 주(7월 13일 기준) 한국부동산원 주간 아파트가격 동향을 두고 여러 매체가 서울 아파트값 상승세와 자치구별 온도차를 다뤘습니다. 전국 아파트 매매가격은 전주보다 0.11%, 수도권은 0.21% 올랐고 서울은 2주 연속 0.30% 상승을 유지했습니다. 이 글은 여러 매체가 공통으로 확인한 사실만 추려 이 대시보드의 실거래가 데이터로 다시 확인해본 결과를 정리했습니다.",
+      },
+      {
+        type: "callout",
+        variant: "warning",
+        text: "이 글은 여러 언론사의 보도 내용 가운데 사실관계가 겹치는 부분만 추려 새로 정리한 것으로, 특정 언론사의 시각을 대변하지 않습니다. " +
+          DISCLAIMER,
+      },
+      {
+        type: "heading",
+        text: "이번 주 화제 — 성북구·구로구가 서울에서 가장 많이 올랐다",
+      },
+      {
+        type: "paragraph",
+        text: "디지털데일리와 서울경제는 이번 주 서울 25개 구 가운데 성북구가 0.49% 올라 상승률이 가장 높았다고 전했습니다. 연합인포맥스는 그 뒤를 구로구(0.44%)가 이었다고 보도했습니다.",
+      },
+      {
+        type: "heading",
+        text: "자사 데이터 교차검증 — 상승 흐름은 확인되지만 이번 달 수치는 신고 지연 감안 필요",
+      },
+      {
+        type: "paragraph",
+        text: "이 대시보드에서 성북구 실거래가를 조회하면 최근 1년 평균 매매가가 15.89%, 3개월은 4.61% 올라 있어 상승 흐름과 방향이 일치합니다. 구로구도 1년 22.0%, 3개월 9.54%, 전월도 3.25% 올라 네 구간 모두 상승세였습니다.",
+      },
+      {
+        type: "paragraph",
+        text: "다만 두 지역 모두 가장 최근 달(2026년 7월) 거래 건수가 전월보다 크게 줄어(성북구 86건·전월 286건, 구로구 118건·전월 269건), 신고 기한(계약일로부터 30일) 때문에 이번 달 거래가 아직 다 반영되지 않았을 가능성이 있습니다. 부동산원 주간 지수는 집계 방식과 범위가 달라 이번 주 0.49%·0.44%라는 수치 자체를 이 데이터로 그대로 검증하기는 어렵습니다.",
+      },
+      {
+        type: "sourceNote",
+        asOfDate: "2026-07-18",
+      },
+      {
+        type: "heading",
+        text: "대출 규제 속 외곽 지역으로 향하는 실수요",
+      },
+      {
+        type: "paragraph",
+        text: "서울신문은 대출 한도가 줄어든 이후 상대적으로 가격 부담이 낮은 노원·도봉·강북 등 외곽 지역으로 실수요가 옮겨가고 있다고 전했고, 한국경제 등 다른 매체도 이 지역들의 상승세를 함께 보도했습니다.",
+      },
+      {
+        type: "paragraph",
+        text: "노원구는 이 대시보드 기준으로도 1년 13.93%, 3개월 8.47%, 전월도 3.58% 올라 네 구간 모두 상승세로 보도와 방향이 일치합니다. 다만 도봉구는 1년 5.98%에 그쳐 노원구만큼 뚜렷하지는 않았습니다.",
+      },
+      {
+        type: "sourceNote",
+        asOfDate: "2026-07-18",
+      },
+      {
+        type: "heading",
+        text: "정리",
+      },
+      {
+        type: "list",
+        ordered: false,
+        items: [
+          "세 지역 모두 이 대시보드 데이터로 최근 상승 흐름은 확인되지만, 주간 등락률 자체는 집계 방식이 달라 그대로 비교하기 어렵습니다.",
+          "가장 최근 달 수치는 신고 지연으로 거래 건수가 적게 잡히는 경향이 있어, 3개월·1년 등 더 긴 흐름을 함께 보는 것이 안전합니다.",
+          "이 정리는 특정 지역의 매수·매도를 권하지 않으며, 실제 의사결정 전에는 국토교통부 실거래가 공개시스템 원자료와 전문가 확인을 함께 거치는 것이 좋습니다.",
+        ],
+      },
+      {
+        type: "sourceLinks",
+        items: [
+          {
+            outlet: "디지털데일리",
+            title: "“진작 동탄에 집 살걸”…아파트값 상승률 0.73%, 또 전국 1위",
+            url: "https://n.news.naver.com/mnews/article/138/0002234542?sid=101",
+            publishedAt: "2026-07-18",
+          },
+          {
+            outlet: "연합인포맥스",
+            title: "중저가 수요가 떠받치자…서울 아파트값 시세 전고점 돌파",
+            url: "https://news.einfomax.co.kr/news/articleView.html?idxno=4425639",
+            publishedAt: "2026-07-18",
+          },
+          {
+            outlet: "서울경제",
+            title: "동탄 열기 병점으로 번졌다…수도권 집값 상승세 인접지역 확산",
+            url: "https://n.news.naver.com/mnews/article/011/0004642469?sid=101",
+            publishedAt: "2026-07-17",
+          },
+          {
+            outlet: "서울신문",
+            title: "대출 문턱 높아지자 점점 외곽으로… '노·도·강' 중소형 평수 곳곳 신고가 거래",
+            url: "https://n.news.naver.com/mnews/article/081/0003661900?sid=101",
+            publishedAt: "2026-07-16",
+          },
+          {
+            outlet: "한국경제",
+            title: '"한 달 만에 1억 넘게 뛰었대"…집값 폭주, 이 동네로 번졌다',
+            url: "https://n.news.naver.com/mnews/article/015/0005310755?sid=101",
+            publishedAt: "2026-07-16",
+          },
+          {
+            outlet: "더팩트",
+            title: "규제에도 동탄 집값 0.73% 상승…서울은 75주째 오름세",
+            url: "https://n.news.naver.com/mnews/article/629/0000516746?sid=101",
+            publishedAt: "2026-07-16",
+          },
         ],
       },
     ],
