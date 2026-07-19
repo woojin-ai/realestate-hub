@@ -40,6 +40,7 @@ import {
   type FetchCacheStatusRow,
 } from "@/lib/db-cache";
 import type { AllData } from "@/lib/analyzer";
+import { toKstDateString } from "@/lib/kst";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -111,12 +112,14 @@ async function prewarmRegion(
   // 이 값을 넘어서는 방향으로만 점진 갱신한다(절대 줄어들지 않음).
   const baseCollected = cacheRow?.months_collected ?? 0;
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  // /api/data와 동일 기준: 하루 경계는 00:00 KST이며, 비교의 양변(현재 시각과
+  // last_fetched_at) 모두 toKstDateString(lib/kst.ts)을 통과시킨다.
+  const todayKst = toKstDateString();
   const cacheFreshToday =
     !!cacheRow &&
     cacheRow.status === "ready" &&
     !!cacheRow.last_fetched_at &&
-    cacheRow.last_fetched_at.slice(0, 10) === todayStr;
+    toKstDateString(cacheRow.last_fetched_at) === todayKst;
 
   // /api/data와 동일 규칙: 이미 수집된 범위(months_collected) 안이고, 최신월(index 0)은
   // 오늘 이미 갱신된 경우에만 스킵 가능. 나머지는 이번 라운드에 (재)수집한다.

@@ -17,6 +17,7 @@ import {
   type FetchCacheStatusRow,
 } from "@/lib/db-cache";
 import type { FetchSource } from "@/lib/types";
+import { toKstDateString } from "@/lib/kst";
 
 // 국토부 API는 매 요청 최신 신고분을 반영해야 하므로 이 라우트는 캐시하지 않는다.
 // (Next 16, Cache Components 미사용 → 'Previous Model'의 route segment config가 유효)
@@ -94,12 +95,15 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  // "오늘 이미 수집했나?"의 하루 경계는 00:00 KST다(한국 부동산 데이터 서비스).
+  // last_fetched_at은 timestamptz(UTC 순간값)로 저장되므로 비교의 **양변 모두**
+  // toKstDateString을 통과시킨다 — 한쪽만 변환하면 기준이 어긋난다.
+  const todayKst = toKstDateString();
   const cacheFreshToday =
     !!cacheRow &&
     cacheRow.status === "ready" &&
     !!cacheRow.last_fetched_at &&
-    cacheRow.last_fetched_at.slice(0, 10) === todayStr;
+    toKstDateString(cacheRow.last_fetched_at) === todayKst;
 
   // ymList는 최신월이 인덱스 0. months_collected는 "가장 최근부터 몇 개월이
   // 이미 수집되어 있는지"를 뜻하므로, 그 범위 안(index < months_collected)이면

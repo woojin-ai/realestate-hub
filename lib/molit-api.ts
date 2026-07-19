@@ -6,6 +6,8 @@
 // 인코딩되어(%가 %25로) 500 에러가 난다 — 원본 fetcher.py의 _call_api() 방식 그대로 유지.
 
 import { XMLParser } from "fast-xml-parser";
+// kst.ts는 아무것도 import하지 않는 무의존 모듈이라 위 순환참조 규칙에 저촉되지 않는다.
+import { getKstYm } from "./kst";
 
 // 건물 유형. 순환참조를 피하기 위해(types.ts → analyzer.ts → molit-api.ts 방향 유지)
 // 최하위 모듈인 여기서 정의하고 types.ts에서 재수출한다(중복정의 금지).
@@ -384,15 +386,18 @@ async function fetchRentSingle(
   return { records: results, failed: false };
 }
 
-/** 최근 N개월의 YYYYMM 리스트 반환 (원본 fetcher.py get_ym_list) */
+/**
+ * 최근 N개월의 YYYYMM 리스트 반환 (원본 fetcher.py get_ym_list). index 0이 최신월.
+ *
+ * 월 경계는 **KST 기준**이다(lib/kst.ts getKstYm). 이 함수가 정하는 "최신월"은
+ * fetch_cache_status의 신선도 판정(toKstDateString, 하루 경계)과 같은 타임존 기준
+ * 위에 있어야 한다 — 두 경계가 어긋나면 매월 1일에 "아직 수집된 적 없는 달을
+ * 신선한 캐시로 착각해 빈 값으로 서빙"하는 창이 생긴다(자세한 경위는 kst.ts 상단 주석).
+ */
 export function getYmList(monthsBack: number): string[] {
   const result: string[] = [];
-  const now = new Date();
   for (let i = 0; i < monthsBack; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    result.push(`${y}${m}`);
+    result.push(getKstYm(i));
   }
   return result;
 }

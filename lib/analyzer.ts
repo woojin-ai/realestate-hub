@@ -3,6 +3,7 @@
 // 오피스텔/도시형 필터 키워드 리스트는 원본 그대로 이관(임의 축소 금지).
 
 import type { MonthData, TradeRecord, RentRecord } from "./molit-api";
+import { getKstYm } from "./kst";
 
 type DealRecord = TradeRecord | RentRecord;
 
@@ -180,13 +181,19 @@ function isForceApt(name: string): boolean {
   return APT_FORCE_KEYWORDS.some((kw) => nameLower.includes(kw.toLowerCase()));
 }
 
-/** 원본 analyzer.py get_month_key: offset개월 전 YYYYMM */
+/**
+ * 원본 analyzer.py get_month_key: offset개월 전 YYYYMM.
+ *
+ * 월 경계 계산은 getYmList(molit-api.ts)와 **같은 기준**(lib/kst.ts getKstYm, KST)을
+ * 쓴다 — 이 함수가 만든 키로 buildSummary가 monthly(= getYmList가 수집한 달들)를
+ * 조회하므로, 두 함수의 "이번 달"이 어긋나면 변동률이 엉뚱한 달을 가리킨다.
+ *
+ * getKstYm으로 옮기면서 기존 `setMonth(getMonth() - offset)` 방식의 말일 롤오버
+ * 버그도 함께 해소됐다(2026-07-31에 offset=1 → 6월 31일이 7월 1일로 넘어가 `202607`
+ * 반환 → "전월 대비"가 당월과 자기 자신을 비교해 0%로 표시되던 문제. 매월 29~31일 발생).
+ */
 export function getMonthKey(offset = 0): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - offset);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}${m}`;
+  return getKstYm(offset);
 }
 
 export function avgTradePrice(records: TradeRecord[]): number | null {
