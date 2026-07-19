@@ -32,6 +32,7 @@ import { REGION_CODES } from "@/lib/regions";
 import { collectMonth, getYmList, type MonthData } from "@/lib/molit-api";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import {
+  dedupeMonthData,
   getCacheStatus,
   upsertCacheStatus,
   upsertMonthDeals,
@@ -172,7 +173,20 @@ async function prewarmRegion(
         }
       })
     );
-    for (const { ym, idx, data, failed } of results) {
+    for (const { ym, idx, data: rawData, failed } of results) {
+      // ── monthly_stats writer 기준 통일 (2026-07-20) ─────────────────────
+      // 아래 upsertMonthlyStats(allData)가 monthly_stats.deal_count를 쓰는데,
+      // /api/data도 같은 지역·월의 같은 행을 쓴다. /api/data가 접힌 값으로 쓰도록
+      // 바뀌었으므로 여기서 원본을 그대로 넘기면 **두 writer가 같은 행을 서로 다른
+      // deal_count로 번갈아 덮어쓰게 된다.** 같은 기준(dedupeMonthData →
+      // dealNaturalKey)으로 접어 두 writer의 값을 일치시킨다.
+      // (upsertMonthDeals는 내부에서 어차피 같은 기준으로 접으므로 접힌 값을 넘겨도
+      //  적재 결과는 동일하다 — 멱등.)
+      //
+      // ⚠️ failed/anyFailed/incomplete 게이팅과 months_collected 계산은 캐시
+      // 포이즈닝 방지 로직이므로 건드리지 않는다 — 아래 분기는 rawData 대신 접힌
+      // data를 쓸 뿐 조건·흐름이 그대로다.
+      const data = dedupeMonthData(lawdCd, BUILDING_TYPE, ym, rawData);
       allData[ym] = data;
       if (failed) anyFailed = true;
       let upsertOk = true;

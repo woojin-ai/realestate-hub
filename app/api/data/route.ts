@@ -8,6 +8,7 @@ import {
 import { buildSummary, buildAptStats, type AllData } from "@/lib/analyzer";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import {
+  dedupeMonthData,
   getCacheStatus,
   loadMonthFromDb,
   upsertCacheStatus,
@@ -149,7 +150,34 @@ export async function GET(request: NextRequest) {
         }
       })
     );
-    for (const { ym, data, failed } of results) {
+    for (const { ym, data: rawData, failed } of results) {
+      // ── 라이브/캐시 경로 건수 일치 (2026-07-20) ──────────────────────────
+      // 국토부 API 원본은 deals 테이블의 자연키가 같은 레코드를 여러 건 돌려준다.
+      // 캐시 경로(loadMonthFromDb)는 이미 접힌 DB 행을 읽으므로, 라이브 경로만
+      // 원본 그대로 싣던 기존 코드에서는 **같은 달인데 서빙 경로에 따라 건수가
+      // 달라졌다**(실측: 세종 36110/202607 전세 라이브 270 vs 캐시 258, 매매 133 vs
+      // 131). 최신월만 신선도에 따라 두 경로를 오가므로 "진행 중인 달의 거래건수가
+      // 조회할 때마다 줄어드는" 것처럼 보였다. upsertMonthDeals가 적재 시 쓰는 것과
+      // 동일한 기준(dedupeMonthData → dealNaturalKey)으로 여기서도 접어, 어느
+      // 경로로 서빙되든 같은 값이 나오게 한다.
+      //
+      // ⚠️ 표시 건수는 "불변"이 아니다 — 라이브 경로를 타던 **최신월의 건수가
+      // 캐시 값에 맞춰 내려간다**(위 실측 기준 전세 270→258, 매매 133→131).
+      // 그대로인 것은 완결월(원래 캐시 경로 전용)과, 이미 캐시 경로로 서빙되던
+      // 값이다. 즉 오르내리던 최신월 숫자를 낮은 쪽으로 고정하는 변경이다.
+      // 단 완결월도 예외가 하나 있다 — 위 :127에서 loadMonthFromDb가 throw하면
+      // 그 달은 monthsToFetch로 재편입돼 라이브 경로를 타고, 이때는 완결월도
+      // 접힌 값이 된다(캐시 값과 같아지는 방향이라 회귀가 아니라 개선이다).
+      //
+      // ⚠️ 자연키는 거래를 완전히 식별하지 못해 실제보다 적게 세는 쪽으로 치우쳐
+      // 있다. 자연키 확장(contract_type / contractTerm)은 난이도가 서로 다르고
+      // 표시 건수가 올라가는 변경이라 이번 범위에서 제외했다 — 배경·한계·확장
+      // 시 손대야 할 지점은 lib/db-cache.ts의 dedupeMonthData 주석 참고.
+      //
+      // upsertMonthDeals도 내부에서 같은 기준으로 다시 접으므로 이중 적용돼도
+      // 결과는 동일하다(멱등). failed 처리(캐시 포이즈닝 방지)는 건드리지 않는다 —
+      // 아래 분기는 rawData가 아니라 접힌 data를 쓸 뿐 조건/흐름이 그대로다.
+      const data = dedupeMonthData(lawdCd, buildingType, ym, rawData);
       // 응답 payload에는 실패 여부와 무관하게 확보된 데이터를 그대로 싣는다(응답 200 유지).
       allData[ym] = data;
       if (failed) failedMonths.add(ym);

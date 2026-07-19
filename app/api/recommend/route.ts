@@ -6,7 +6,7 @@ import {
 } from "@/lib/molit-api";
 import { buildAptStats, type AllData, type AptStat } from "@/lib/analyzer";
 import { getSupabaseServerClient } from "@/lib/supabase";
-import { loadMonthFromDb } from "@/lib/db-cache";
+import { dedupeMonthData, loadMonthFromDb } from "@/lib/db-cache";
 import {
   priceScore,
   subwayScore,
@@ -83,7 +83,20 @@ async function loadAptAllData(lawdCd: string): Promise<AllData> {
         }
       })
     );
-    for (const { ym, data } of results) allData[ym] = data;
+    // ── 라이브/캐시 경로 건수 일치 (2026-07-20) ────────────────────────────
+    // 위쪽 DB 히트월(loadMonthFromDb)은 deals 테이블에서 읽으므로 이미 자연키로
+    // 접힌 값인데, 이 폴백 경로는 국토부 API 원본을 그대로 담고 있었다. 그래서
+    // 한 응답 안에서 **DB 히트월(접힘)과 폴백월(원본)이 섞여** 월마다 세는 기준이
+    // 달라졌고, 그 allData가 아래 buildAptStats로 들어가 추천 결과의 단지별
+    // 거래건수(AptStat.count/trade_count)로 사용자에게 그대로 노출됐다.
+    // /api/data와 동일한 증상이라 동일한 기준(dedupeMonthData → dealNaturalKey)으로
+    // 접어 월 간 기준을 통일한다. 자연키의 한계는 lib/db-cache.ts 주석 참고.
+    //
+    // 이 라우트는 읽기 전용이라 위 주석대로 failed 플래그를 쓰지 않는다 — 그 설계는
+    // 그대로 두고 dedupe만 끼운다(캐시 영속화·마킹을 새로 하지 않는다).
+    for (const { ym, data } of results) {
+      allData[ym] = dedupeMonthData(lawdCd, "아파트", ym, data);
+    }
   }
 
   return allData;

@@ -127,6 +127,76 @@ function dedupeByNaturalKey(rows: DealRow[]): DealRow[] {
   return Array.from(map.values());
 }
 
+/**
+ * MonthData(국토부 API 파싱 결과)를 deals 테이블 자연키 기준으로 접는다.
+ * upsertMonthDeals가 DB에 적재할 때 쓰는 것과 **완전히 동일한 기준**이다.
+ *
+ * ── 왜 필요한가 (2026-07-20) ─────────────────────────────────────────
+ * /api/data는 같은 달을 두 경로로 서빙한다.
+ *   (a) 캐시 경로: loadMonthFromDb → deals 테이블 = 자연키로 이미 접힌 행
+ *   (b) 라이브 경로: collectMonth → 국토부 API 원본 = 접히지 않은 레코드
+ * 그래서 예전에는 같은 달인데도 어느 경로로 서빙되느냐에 따라 건수가 달라졌다
+ * (실측: 세종 36110 / 202607 전세 라이브 270건 vs 캐시 258건, 매매 133 vs 131).
+ * 최신월(index 0)만 신선도에 따라 두 경로를 오가므로, 사용자에겐 "진행 중인 달의
+ * 거래건수가 조회할 때마다 줄어드는" 것처럼 보였다(완결월은 항상 캐시라 안정적).
+ * 이 함수를 라이브 경로에도 적용해 **어느 경로로 서빙되든 같은 값**이 나오게 한다.
+ *
+ * ── 이 함수 도입으로 표시 건수가 어떻게 바뀌는가 (오해 주의) ──────────
+ * "수치가 안 바뀐다"가 아니다. 정확히는 다음과 같다.
+ *   • 내려감: 라이브 경로로 서빙되던 **최신월**. 접히지 않은 원본을 보여주던 값이
+ *     캐시 값에 맞춰 내려간다(세종 202607 전세 270→258, 매매 133→131).
+ *   • 그대로: **완결월**(원래 캐시 경로에서만 읽힘), 그리고 이미 캐시 경로로
+ *     서빙되고 있던 값. 이쪽은 애초에 접힌 값이었으므로 변화가 없다.
+ * 즉 "조회 시점에 따라 최신월 건수가 오르내리던" 것을 낮은 쪽(캐시 값)으로
+ * 고정하는 변경이다. 사용자가 보는 최신월 숫자는 실제로 줄어든다.
+ *
+ * ── 한계 (알고 쓸 것) ────────────────────────────────────────────────
+ * 자연키(lawd_cd·building_type·deal_type·name·dong·area·floor·연월일·price·
+ * deposit·monthly)는 거래 1건을 **완전히 식별하지 못한다.** 이 필드들이 모두 같은
+ * 서로 다른 계약이 1건으로 접힌다(세종 202607 전세 실측: 접힌 12건 중 최소 2건이
+ * 실재하는 별개 거래). 즉 이 함수는 "실제보다 적게 세는" 쪽으로 치우쳐 있다.
+ *
+ * 이걸 교정하려면 자연키를 넓혀야 하는데, 후보 두 개는 난이도가 전혀 다르다.
+ *   • contract_type(신규/갱신) — **이미 파싱되어 RentRecord·DealRow·deals 컬럼에
+ *     모두 존재하고, 키에만 빠져 있다.** 접기 기준 자체는 dealNaturalKey(위) 한
+ *     곳만 고치면 이 함수와 upsertMonthDeals 양쪽에 같이 반영된다. 다만 DB 적재
+ *     단위까지 실제로 갈라지게 하려면 DEALS_CONFLICT_TARGET(L22)과 schema.sql의
+ *     unique 제약도 함께 바꿔야 한다.
+ *   • contractTerm(계약기간) — **파서에 아예 없다.** lib/molit-api.ts를 grep해도
+ *     0건이다(국토부 응답 XML에는 있으나 fetchRentSingle이 읽지 않는다). 키에
+ *     넣으려면 molit-api.ts 파싱 추가 → RentRecord 필드 추가 → DealRow 필드 추가
+ *     → deals 컬럼 추가가 **선행**돼야 한다. dealNaturalKey만 고쳐서는 안 된다.
+ * 어느 쪽이든 표시 건수가 올라가는 변경이라, 자연키 확장은 이번 수정 범위에서
+ * 빼고 사용자 판단 사항으로 분리했다. 이번 수정은 **두 경로의 값을 일치시키는
+ * 것까지만** 한다(자연키는 손대지 않음).
+ *
+ * 중복제거 기준을 두 곳에 따로 구현하지 말 것 — 반드시 dealNaturalKey를 경유한다.
+ */
+export function dedupeMonthData(
+  lawdCd: string,
+  buildingType: BuildingType,
+  ym: string,
+  data: MonthData
+): MonthData {
+  // upsertMonthDeals와 동일하게 매매/전세/월세를 한 배치로 합쳐 접는다(deal_type이
+  // 자연키에 포함되므로 유형이 다른 레코드끼리는 애초에 충돌하지 않는다). 키 계산은
+  // toDealRow를 그대로 거쳐, DB 적재 시점과 키가 어긋날 여지를 없앤다.
+  // Map.set은 기존 키의 삽입 순서를 유지한 채 값만 갱신하므로, dedupeByNaturalKey와
+  // 동일한 "마지막 값 유지" 의미가 된다.
+  const map = new Map<string, TradeRecord | RentRecord>();
+  for (const record of [...data.매매, ...data.전세, ...data.월세]) {
+    map.set(dealNaturalKey(toDealRow(lawdCd, buildingType, ym, record)), record);
+  }
+
+  const result: MonthData = { 매매: [], 전세: [], 월세: [] };
+  for (const record of map.values()) {
+    if (record.deal_type === "매매") result.매매.push(record as TradeRecord);
+    else if (record.deal_type === "전세") result.전세.push(record as RentRecord);
+    else result.월세.push(record as RentRecord);
+  }
+  return result;
+}
+
 /** 한 달치(MonthData)를 deals 테이블에 upsert(자연키 충돌 시 갱신)한다. */
 export async function upsertMonthDeals(
   supabase: SupabaseClient,
