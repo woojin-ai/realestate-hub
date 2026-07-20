@@ -20,6 +20,7 @@ import {
   type RecommendItem,
   type RecommendResponse,
 } from "@/lib/recommender";
+import { getKstYear } from "@/lib/kst";
 
 // 추천은 사용자 입력 의존·동적 결과이므로 캐시하지 않는다(기획 §4: SEO 인덱싱 대상 아님).
 export const dynamic = "force-dynamic";
@@ -129,12 +130,17 @@ export async function GET(request: NextRequest) {
   // 문자열이거나 파싱 불가일 때 (현재연도 - 10)을 폴백으로 쓴다.
   // (구버전 주석의 "default 2015"는 sp.get("year")==null 시 Number(null)===0 이라
   //  실제로는 도달 불가한 죽은 코드였으므로 클라 기본값과 통일한다.)
+  //
+  // 연도는 **KST 기준**으로 읽는다(lib/kst.ts getKstYear). 이 라우트는 서버리스
+  // (프로세스 TZ = UTC)에서 돌아가므로 `new Date().getFullYear()`를 쓰면 매년 1월 1일
+  // 00:00~09:00 KST에 폴백이 한 해 밀린다. 앱 UI는 AiRecommendSection이 year를 항상
+  // 보내 이 폴백에 도달하지 않지만, year 없이 직접 호출하는 API 소비자에게는 적용된다.
   const yearRaw = sp.get("year");
   const yearParsed = Number(yearRaw);
   const newYear =
     yearRaw !== null && yearRaw !== "" && Number.isFinite(yearParsed)
       ? yearParsed
-      : new Date().getFullYear() - 10;
+      : getKstYear() - 10;
 
   // 가중치(design default 45/35/20/10, 원본 app.py w_price/w_subway/w_new/w_slope 복원).
   // compositeScore가 합으로 정규화하므로 원시값 그대로 사용.

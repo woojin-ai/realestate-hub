@@ -16,10 +16,33 @@
 // 있던 수정 전에는 신선도 불일치로 라이브 폴백해 자가 치유됐다).
 //
 // 그래서 이 모듈이 **날짜·월 경계의 유일한 기준**이다. 하루 경계는 toKstDateString,
-// 월 경계는 getKstYm 하나만 쓰고, 다른 곳에서 `new Date()`의 getMonth()/getFullYear()나
-// `toISOString().slice()`로 경계를 다시 계산하지 않는다.
+// 월 경계는 getKstYm, 연 경계는 getKstYear 하나만 쓰고, 다른 곳에서 `new Date()`의
+// getMonth()/getFullYear()나 `toISOString().slice()`로 경계를 다시 계산하지 않는다.
 // (현재 소비처: app/api/data/route.ts, app/api/cron/prewarm/route.ts,
-//  lib/molit-api.ts getYmList, lib/analyzer.ts getMonthKey)
+//  lib/molit-api.ts getYmList, lib/analyzer.ts getMonthKey,
+//  app/api/recommend/route.ts 신축기준연도 폴백)
+//
+// ※ 단, 아래 클라이언트 컴포넌트 3곳은 이 규칙의 **의도적 예외**로 남겨 두고
+//   `new Date().getFullYear()`를 그대로 쓴다. 변수명이 둘로 갈리니 grep할 때 주의:
+//     - `CUR_YEAR`   components/AiRecommendSection.tsx:33 (폼 초기값 `CUR_YEAR - 10`)
+//     - `CUR_YEAR`   components/RecommendForm.tsx:30      (연도 input의 `max` 상한)
+//     - `currentYear` components/AptDetailModal.tsx:317   (`${currentYear - build_year}년차`
+//                                                          로 **화면에 직접 찍히는 수치**)
+//
+//   예외의 근거는 "기술적 불가"가 아니라 **트레이드오프**다. 아래 주장은 사실이 아니니
+//   되풀이하지 말 것: "클라이언트에 getKstYear를 쓰면 이중 보정이 된다"는 **틀렸다**.
+//   getKstYear의 경로는 getTime()(에포크, TZ 무관) → +9h → getUTCFullYear()(TZ 무관)뿐이라
+//   로컬 게터를 한 번도 거치지 않고, 따라서 이중 보정은 구조적으로 일어날 수 없다
+//   (TZ=UTC와 TZ=Asia/Seoul에서 출력 동일함을 실측 확인, 2026-07-20 라운드 32).
+//
+//   실제 근거는 두 가지다.
+//   (1) 주 사용자층인 한국 사용자는 브라우저 로컬 TZ가 이미 KST라 현재 동작이 맞다.
+//   (2) 날짜·월 경계 통일이라는 이 모듈의 목적은 서버 측 수집/캐시 판정에 있으므로,
+//       적용 범위를 서버 코드로 한정한다(이 파일에 `server-only` 지시자는 없어 클라에서
+//       import 자체는 가능하다 — 강제가 아니라 범위 결정이다).
+//   그 대가로 로컬 TZ가 KST와 다른 해외 사용자는 연말·연초 경계에서 최대 하루 동안
+//   연도 값이 1 어긋나는 것을 감수한다. 정확도만 놓고 보면 오히려 getKstYear 쪽이 낫다.
+//   클라이언트에도 KST를 적용할지는 이 트레이드오프를 다시 저울질해서 정하면 된다.
 
 /**
  * KST(UTC+9) 오프셋(ms).
@@ -74,6 +97,15 @@ export function toKstDateString(instant?: Date | string): string {
 }
 
 /**
+ * `getKstYm`이 받아들이는 `monthsAgo`의 절댓값 상한(개월). 50년.
+ *
+ * 실제 호출부가 쓰는 최대값은 23이다(`app/api/data/route.ts` MAX_MONTHS=24 → 루프
+ * 인덱스 0..23). 600은 그보다 한참 위라 정상 사용을 막지 않으면서, 기준 시점이
+ * 2000년대일 때 결과 연도를 4자리로 묶어 반환값이 항상 6자리 `YYYYMM`이 되게 한다.
+ */
+const MAX_MONTHS_AGO = 600;
+
+/**
  * KST 기준으로 `monthsAgo`개월 전의 `YYYYMM`을 반환한다. **월 경계 기준.**
  *
  * 연·월을 정수 하나(`year * 12 + month`)로 접어서 빼기 때문에, `Date.prototype.setMonth`
@@ -82,10 +114,26 @@ export function toKstDateString(instant?: Date | string): string {
  * 돌려줬다. 즉 매월 29~31일에 "전월 대비"가 당월과 자기 자신을 비교했다.)
  *
  * @param monthsAgo 몇 개월 전인지(0 = 이번 달). 음수를 주면 미래 월.
+ *   **절댓값 {@link MAX_MONTHS_AGO} 이하의 안전한 정수여야 한다.**
  * @param instant 기준 시점. 생략하면 현재 시각. (테스트/재현용으로만 넘긴다.)
- * @throws {RangeError} `instant`가 파싱 불가능한 경우. toKstDateString과 달리 빈 문자열
- *   같은 안전한 sentinel로 물러설 수 없다 — `YYYYMM`은 곧바로 API 조회 대상 월과 DB
- *   조회 키로 쓰이므로, 잘못된 값을 조용히 흘리면 엉뚱한 달을 수집·서빙하게 된다.
+ * @throws {RangeError} `instant`가 파싱 불가능하거나, `monthsAgo`가 안전한 정수가
+ *   아니거나 절댓값이 {@link MAX_MONTHS_AGO}를 넘는 경우.
+ *
+ *   toKstDateString과 달리 빈 문자열 같은 안전한 sentinel로 물러설 수 없다 — `YYYYMM`은
+ *   곧바로 API 조회 대상 월과 DB 조회 키로 쓰이므로, 잘못된 값을 조용히 흘리면 엉뚱한
+ *   달을 수집·서빙하게 된다. `monthsAgo`도 같은 논리다: 검증이 없으면 `NaN`은
+ *   `"NaNNaN"`을, `1.5`는 `"20265.5"`를 **형식만 문자열인 채로** 반환해 그대로 조회 키가
+ *   된다. 이런 키는 API에서 빈 응답으로 돌아오거나 DB에 유령 행을 만들고, 원인이
+ *   호출부에서 멀리 떨어진 곳에서 "데이터가 없다"로만 드러나 추적이 어렵다. 호출 지점에서
+ *   즉시 터뜨리는 편이 낫다. (현재 호출부는 루프 인덱스와 리터럴뿐이라 도달 불가이며,
+ *   이 검증은 향후 외부 입력이 연결될 때를 위한 방어선이다.)
+ *
+ *   ⚠️ 그래서 `Number.isInteger`가 아니라 **`Number.isSafeInteger` + 절댓값 상한**이다.
+ *   `Number.isInteger(1e21)`은 `true`라, 상한이 없으면 위에서 막겠다고 한 것과 똑같은
+ *   부류의 malformed 키가 그대로 빠져나간다:
+ *   `getKstYm(1e21, "2026-07-20T05:00:00Z")` → `"-8333333333333333000001"`
+ *   (2026-07-20 라운드 32 QA 실측). 상한을 음수 쪽에도 대칭으로 거는 것은 위 "음수 =
+ *   미래 월"을 유지하면서 `-1e21`도 같이 막기 위해서다.
  *
  * @example
  * // UTC로는 아직 2026-07-31이지만 KST로는 이미 2026-08-01인 시점
@@ -93,6 +141,11 @@ export function toKstDateString(instant?: Date | string): string {
  * getKstYm(1, "2026-07-31T15:00:00Z"); // "202607"
  */
 export function getKstYm(monthsAgo = 0, instant?: Date | string): string {
+  if (!Number.isSafeInteger(monthsAgo) || Math.abs(monthsAgo) > MAX_MONTHS_AGO) {
+    throw new RangeError(
+      `getKstYm: monthsAgo는 절댓값 ${MAX_MONTHS_AGO} 이하의 안전한 정수여야 합니다: ${String(monthsAgo)}`
+    );
+  }
   const shifted = toKstShifted(instant);
   if (shifted === null) {
     throw new RangeError(`getKstYm: 파싱할 수 없는 시점입니다: ${String(instant)}`);
@@ -103,4 +156,37 @@ export function getKstYm(monthsAgo = 0, instant?: Date | string): string {
   const year = Math.floor(totalMonths / 12);
   const month = totalMonths - year * 12 + 1; // 1~12 (음수 나머지 걱정 없이 복원)
   return `${year}${String(month).padStart(2, "0")}`;
+}
+
+/**
+ * KST 기준 달력 연도를 숫자로 반환한다. **연 경계 기준.**
+ *
+ * 서버(프로세스 TZ = UTC)에서 `new Date().getFullYear()`를 쓰면 매년 1월 1일
+ * 00:00~09:00 KST 동안 아직 전년도를 돌려준다. 이 9시간짜리 창을 없애기 위한 함수다.
+ *
+ * ⚠️ 현재 **서버 코드에서만** 호출한다. 단, 이는 적용 범위를 정한 것이지 클라이언트에서
+ * 쓰면 틀려지기 때문이 아니다 — 이 함수는 로컬 게터를 쓰지 않아 실행 환경의 TZ와 무관하게
+ * 같은 값을 내므로 클라이언트에서 호출해도 이중 보정 같은 오작동은 없다. 예외로 남긴
+ * 클라이언트 3곳과 그 트레이드오프는 이 파일 상단 주석 참고.
+ *
+ * @param instant 기준 시점. 생략하면 현재 시각. (테스트/재현용으로만 넘긴다.)
+ * @throws {RangeError} `instant`가 파싱 불가능한 경우. **toKstDateString(빈 문자열)이
+ *   아니라 getKstYm과 같은 throw 정책을 따른다.** 근거는 반환 타입이다: toKstDateString은
+ *   `""`이라는 "어떤 유효한 날짜와 비교해도 불일치"인 sentinel이 있어 신선도 판정을
+ *   안전한 쪽(오래됨 → 라이브 폴백)으로 떨어뜨릴 수 있지만, 이 함수의 `number`에는
+ *   그런 값이 없다. `NaN`을 돌려주면 호출부의 모든 비교가 `false`가 되어 필터가 조용히
+ *   무력화되고, `0` 같은 값은 그 자체로 유효한 연도처럼 보인다. 즉 연도는 "안전한 쪽"이
+ *   정의되지 않으므로, 잘못된 기준연도로 계속 서빙하느니 즉시 터뜨린다.
+ *
+ * @example
+ * // UTC로는 아직 2025-12-31이지만 KST로는 이미 2026-01-01인 시점
+ * getKstYear("2025-12-31T15:00:00Z"); // 2026
+ */
+export function getKstYear(instant?: Date | string): number {
+  const shifted = toKstShifted(instant);
+  if (shifted === null) {
+    throw new RangeError(`getKstYear: 파싱할 수 없는 시점입니다: ${String(instant)}`);
+  }
+  // KST로 민 Date에서 **UTC 게터**로 달력 연도를 읽는다(프로세스 TZ 무관).
+  return shifted.getUTCFullYear();
 }
