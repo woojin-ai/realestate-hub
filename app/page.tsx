@@ -176,7 +176,7 @@ export default function DashboardPage() {
 
             <SummaryCards summary={summary} dealType={dealType} />
 
-            <MonthlyChart monthly={summary?.monthly} dealType={dealType} />
+            <MonthlyChart monthly={summary?.monthly} dealType={dealType} currentYm={summary?.current_ym ?? null} />
 
             <DealsTable rows={rows} dealType={dealType} lawdCd={lawdCd} gu={gu} />
 
