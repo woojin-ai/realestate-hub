@@ -14,6 +14,10 @@ import { Line } from "react-chartjs-2";
 import type { MonthlyStat } from "@/lib/analyzer";
 import { getMonthKey } from "@/lib/analyzer";
 import type { DealType } from "@/lib/types";
+import {
+  CHART_TOOLTIP_PARTIAL_SUFFIX,
+  partialMonthChartCaption,
+} from "@/lib/disclosures";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
@@ -74,7 +78,7 @@ export default function MonthlyChart({ monthly, dealType, currentYm }: MonthlyCh
           label: (ctx) => {
             const v = ctx.parsed.y;
             if (v === null) return "데이터 없음";
-            const suffix = ctx.dataIndex === lastIdx ? " (신고 진행 중)" : "";
+            const suffix = ctx.dataIndex === lastIdx ? CHART_TOOLTIP_PARTIAL_SUFFIX : "";
             return `${v.toLocaleString()}만원${suffix}`;
           },
         },
@@ -114,7 +118,7 @@ export default function MonthlyChart({ monthly, dealType, currentYm }: MonthlyCh
             aria-hidden="true"
             className="inline-block w-4 shrink-0 border-t-2 border-dashed border-brand align-middle"
           />
-          점선 구간은 신고 기한이 지나지 않은 달({ymLabel})입니다.
+          {partialMonthChartCaption(ymLabel)}
         </p>
       )}
     </section>

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AptStat } from "@/lib/analyzer";
 import { formatPrice } from "@/lib/analyzer";
 import type { DealType } from "@/lib/types";
+import { JEONSE_POPULATION_NOTICE_MODAL } from "@/lib/disclosures";
 
 interface AptDetailModalProps {
   apt: AptStat; // 표시할 단지(선택된 row). 부모가 selected !== null일 때만 마운트한다.
@@ -459,8 +460,7 @@ export default function AptDetailModal({
             평수별 표 바로 아래 1곳에만 둔다. 매매 탭에서는 노출하지 않는다. */}
         {dealType === "전세" && (
           <p className="mt-2 text-[11px] md:text-xs text-gray-500 leading-relaxed">
-            전세 평균가는 신규 계약 기준으로 집계되며, 갱신 계약은 평균에서 제외됩니다.
-            거래건수는 갱신을 포함한 전체 신고 건수입니다.
+            {JEONSE_POPULATION_NOTICE_MODAL}
           </p>
         )}
 

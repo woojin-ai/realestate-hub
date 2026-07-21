@@ -5,6 +5,7 @@ import type { AptStat } from "@/lib/analyzer";
 import { formatPrice } from "@/lib/analyzer";
 import type { DealType } from "@/lib/types";
 import AptDetailModal from "@/components/AptDetailModal";
+import { JEONSE_POPULATION_NOTICE_TABLE } from "@/lib/disclosures";
 
 interface DealsTableProps {
   rows: AptStat[] | undefined;
@@ -83,8 +84,7 @@ export default function DealsTable({ rows, dealType, lawdCd, gu }: DealsTablePro
           모집단이 다르다. 두 값이 나란히 보이는 표라 헤더 바로 위에 고지한다(매매 탭은 구분 없음). */}
       {dealType === "전세" && (
         <p className="text-xs text-gray-500 leading-relaxed mb-3">
-          평균 전세가는 신규 계약만으로 집계되며, 거래건수는 갱신을 포함한 전체 신고
-          건수입니다. 두 값의 집계 대상이 달라 거래건수보다 적은 건이 평균에 쓰일 수 있습니다.
+          {JEONSE_POPULATION_NOTICE_TABLE}
         </p>
       )}
       <div className="overflow-x-auto">
