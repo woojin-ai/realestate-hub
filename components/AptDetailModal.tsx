@@ -317,19 +317,31 @@ export default function AptDetailModal({
   const titleId = "apt-detail-modal-title";
   const currentYear = new Date().getFullYear();
 
+  // 전세 탭에서만 "전체 N건(신규 M건)"을 병기한다(매매는 신규/갱신 구분 자체가 없어 new_count=null).
+  const showNewCount = dealType === "전세";
+
   // meta 라인 구성: 존재하는 항목만 ` · `(가운뎃점)으로 연결
+  // 건수와 평균의 기간이 서로 다르므로(건수=수집창 13개월 전체, 평균=거래가 있었던 최근 3개 달)
+  // 두 값 각각에 기간을 명시한다 — analyzer.buildAptStats의 실제 계산 범위와 같은 표기다.
   const metaParts: string[] = [];
   if (apt.build_year) {
     metaParts.push(`${apt.build_year}년 준공`);
     metaParts.push(`${currentYear - Number(apt.build_year)}년차`);
   }
   if (apt.dong) metaParts.push(apt.dong);
-  metaParts.push(`전체 ${apt.count}건`);
-  metaParts.push(`평균 ${formatPrice(apt.avg_price)}`);
+  metaParts.push(
+    showNewCount && apt.new_count != null
+      ? `13개월 전체 ${apt.count}건(신규 ${apt.new_count}건)`
+      : `13개월 전체 ${apt.count}건`
+  );
+  metaParts.push(`최근 거래 3개월 평균 ${formatPrice(apt.avg_price)}`);
 
   // 비율 계산 근거:
   // - 표기 퍼센트(pct)는 "전체 area_stats count 합(total)" 기준 점유율(의미상).
   // - 막대 폭(barW)은 원본과 동일하게 "최댓값(maxCount)" 기준 정규화(시각 대비용).
+  // - 전세 병기(new_count)를 추가해도 이 두 값의 기준은 **전체(count) 그대로**다.
+  //   "이 단지에서 어떤 평형이 많이 거래되는가"는 전체 신고 기준이 자연스럽고,
+  //   표시 그래프를 흔들지 않기 위함이다(공시 문구로 기준을 명시).
   const total = apt.area_stats.reduce((a, s) => a + s.count, 0);
   const maxCount = Math.max(...apt.area_stats.map((s) => s.count), 1);
 
@@ -434,6 +446,11 @@ export default function AptDetailModal({
                       </td>
                       <td className="px-3 py-2 border-b border-gray-100 whitespace-nowrap">
                         {s.count}건
+                        {showNewCount && s.new_count != null && (
+                          <span className="block text-[11px] text-gray-400">
+                            신규 {s.new_count}건
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 border-b border-gray-100">
                         <span className="text-[0.78rem] text-gray-500">{pct}%</span>

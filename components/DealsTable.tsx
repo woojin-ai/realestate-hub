@@ -16,12 +16,19 @@ interface DealsTableProps {
 
 type SortKey = "name" | "build_year" | "avg_price" | "mom_pct" | "count" | "latest_ym";
 
+// 라벨의 괄호 안 기간은 analyzer.buildAptStats가 실제로 쓰는 범위다(임의 표기 아님).
+//  - avg_price: "거래가 있었던 최근 3개 달"의 레코드만 평균(analyzer.ts recentYms = slice(0,3)).
+//    연속 3개월이 아니므로 "최근 3개월"이 아니라 "최근 거래 3개월"로 적는다.
+//  - count: 수집창 전체 = 13개월(app/page.tsx의 months=13, /api/data DEFAULT_MONTHS=13,
+//    /api/recommend RECOMMEND_MONTHS=13 모두 동일).
+//  - mom_pct: recentYms[0] vs recentYms[1] = "거래가 있었던 최근 두 달"의 비교라 인접 달이
+//    보장되지 않는다. 기존 "전월대비"는 거래가 뜸한 단지에서 사실과 달라져 "직전 거래월 대비"로 고친다.
 const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "name", label: "건물명" },
   { key: "build_year", label: "연식" },
-  { key: "avg_price", label: "평균가" },
-  { key: "mom_pct", label: "전월대비" },
-  { key: "count", label: "거래건수" },
+  { key: "avg_price", label: "평균가(최근 거래 3개월)" },
+  { key: "mom_pct", label: "직전 거래월 대비" },
+  { key: "count", label: "거래건수(13개월)" },
   { key: "latest_ym", label: "최근거래월" },
 ];
 
@@ -75,7 +82,15 @@ export default function DealsTable({ rows, dealType, lawdCd, gu }: DealsTablePro
     }
   };
 
-  const avgLabel = dealType === "매매" ? "평균 매매가" : "평균 전세가";
+  const avgLabel =
+    dealType === "매매"
+      ? "평균 매매가(최근 거래 3개월)"
+      : "평균 전세가(최근 거래 3개월)";
+
+  // 전세 탭에서만 "전체 N / 신규 M"을 병기한다. 매매는 국토부 API에 신규/갱신 구분이
+  // 없어(contract_type=null → analyzer가 new_count=null) 병기 대상이 아니다.
+  // new_count가 없는 예전 응답(캐시된 JSON 등)에서도 undefined면 자동으로 미표기된다.
+  const showNewCount = dealType === "전세";
 
   return (
     <section className="bg-white rounded-xl shadow-sm p-4 md:p-5 mb-5">
@@ -157,7 +172,20 @@ export default function DealsTable({ rows, dealType, lawdCd, gu }: DealsTablePro
                           </span>
                         )}
                       </td>
-                      <td className="px-2 py-2.5 md:px-3 border-b border-gray-100">{row.count}</td>
+                      <td className="px-2 py-2.5 md:px-3 border-b border-gray-100 whitespace-nowrap">
+                        {/* 병기 시 스크린리더가 "237 신규 144"로 읽어 앞 숫자가 전체인지
+                            불명확해지므로, 시각적으로는 그대로 두고 한정어만 sr-only로 보충한다.
+                            단위("건")도 모달(`전체 N건(신규 M건)`) 표기와 맞춘다. */}
+                        {showNewCount && row.new_count != null && (
+                          <span className="sr-only">전체 </span>
+                        )}
+                        {row.count}
+                        {showNewCount && row.new_count != null && (
+                          <span className="block text-[11px] text-gray-400">
+                            신규 {row.new_count}건
+                          </span>
+                        )}
+                      </td>
                       <td className="px-2 py-2.5 md:px-3 border-b border-gray-100">
                         {row.latest_ym ? `${row.latest_ym.slice(0, 4)}.${row.latest_ym.slice(4)}` : "-"}
                       </td>

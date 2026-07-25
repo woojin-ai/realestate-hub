@@ -316,11 +316,31 @@ export function buildSummary(allData: AllData): Summary {
   return result;
 }
 
+/**
+ * 신규 계약 건수(= 갱신이 아닌 건). `avgJeonseDeposit(onlyNew)`가 평균에서 빼는 것과
+ * **같은 조건**(`contract_type === "갱신"`)만 쓰므로 `전체 = 신규 + 갱신`이 항상 성립한다.
+ * (평균은 여기에 더해 `deposit > 0`도 요구하므로, 보증금이 0인 이상 신고가 섞이면
+ *  "평균에 실제로 쓰인 건수" < "신규 건수"가 될 수 있다. 표기는 '신규 계약 건수'다.)
+ *
+ * 매매는 국토부 매매 API에 신규/갱신 구분 자체가 없어(`lib/db-cache.ts:86` contract_type=null)
+ * null을 반환한다 — 화면에서 매매 탭에 병기가 뜨지 않게 하는 1차 방어선이다.
+ */
+function countNewContracts(
+  records: DealRecord[],
+  dealType: "매매" | "전세"
+): number | null {
+  if (dealType === "매매") return null;
+  return (records as RentRecord[]).filter((r) => r.contract_type !== "갱신")
+    .length;
+}
+
 export interface AreaStat {
   range: string;
   repr_py: number;
   avg: number | null;
   count: number;
+  /** 전세 전용: count 중 신규 계약 건수(갱신 제외). 매매는 null. 비율/막대 기준은 count(전체) 그대로다. */
+  new_count: number | null;
 }
 
 export interface AptStat {
@@ -330,6 +350,8 @@ export interface AptStat {
   avg_price: number | null;
   count: number;
   trade_count: number;
+  /** 전세 전용: count 중 신규 계약 건수(갱신 제외). 매매는 null. 정렬 키(count)의 의미는 "전체" 그대로다. */
+  new_count: number | null;
   latest_ym: string;
   mom_pct: number | null;
   mom_diff: number | null;
@@ -426,6 +448,7 @@ export function buildAptStats(
           repr_py: reprPy,
           avg: bAvg,
           count: bucketRecords.length,
+          new_count: countNewContracts(bucketRecords, dealType),
         };
       });
 
@@ -460,6 +483,9 @@ export function buildAptStats(
       avg_price: avg,
       count: records.length,
       trade_count: records.length,
+      // ⚠️ 표시/정렬/소규모 필터의 입력은 전부 records.length(전체) 그대로다.
+      //    new_count는 화면에 정보로 덧붙이기만 하며 어떤 집계에도 되먹이지 않는다.
+      new_count: countNewContracts(records, dealType),
       latest_ym: recentYms[0] ?? "",
       mom_pct: momPct,
       mom_diff: momDiff,
