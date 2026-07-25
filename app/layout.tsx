@@ -4,6 +4,7 @@ import "./globals.css";
 import { SITE_URL } from "@/lib/site";
 import CrossSiteNav from "@/components/CrossSiteNav";
 import SiteHeader from "@/components/SiteHeader";
+import SiteFooter from "@/components/SiteFooter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -67,10 +68,16 @@ export default function RootLayout({
         <SiteHeader />
         {children}
         {/*
-          탭 순서상 본문 다음에 마운트(계산기 허브 design/cross-site-nav-widget-spec.md §9).
-          이 프로젝트는 SiteFooter 공용 컴포넌트가 없어 {children} 바로 다음에 둔다.
-          position: fixed라 시각적 위치는 DOM 순서와 무관하지만, 키보드 사용자가 매
-          페이지에서 실제 콘텐츠보다 이 위젯을 먼저 지나치지 않도록 마지막에 둔다.
+          공통 푸터(2026-07-25, 라운드45). 홈("/")에서는 SiteFooter가 자기 자신을
+          렌더링하지 않는다(app/page.tsx가 기존 자체 footer를 담당) —
+          components/SiteFooter.tsx 상단 주석 참고.
+        */}
+        <SiteFooter />
+        {/*
+          탭 순서상 본문(및 이제 footer) 다음에 마운트(계산기 허브
+          design/cross-site-nav-widget-spec.md §9). position: fixed라 시각적 위치는
+          DOM 순서와 무관하지만, 키보드 사용자가 매 페이지에서 실제 콘텐츠보다 이
+          위젯을 먼저 지나치지 않도록 마지막에 둔다.
         */}
         <CrossSiteNav currentSiteId="realestate-hub" />
       </body>
