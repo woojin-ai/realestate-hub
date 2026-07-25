@@ -7,9 +7,11 @@ import {
   formatBlogDateKo,
   getBlogPostBySlug,
   getReadingMinutes,
+  type BlogPost,
 } from "@/lib/blog";
 import BlogBody from "@/components/blog/BlogBody";
 import CategoryBadge from "@/components/blog/CategoryBadge";
+import { SITE_URL } from "@/lib/site";
 
 // docs/design/blog.md §2 상세 페이지. 레이아웃/문구는 구성안 그대로(브레드크럼→제목/메타→콜아웃→본문→CTA+면책 반복→목록 복귀).
 // 헤더: 자체 BlogHeader 대신 전역 SiteHeader(app/layout.tsx)를 사용한다(2026-07-18,
@@ -28,9 +30,62 @@ export async function generateMetadata({
   const post = getBlogPostBySlug(slug);
   if (!post) return {};
 
+  // 절대 URL 베이스는 lib/site.ts의 SITE_URL 하나만 사용한다(app/layout.tsx metadataBase,
+  // app/sitemap.ts, app/robots.ts와 동일 출처). 도메인이 바뀌어도 SITE_URL만 고치면 된다.
+  const url = `${SITE_URL}/blog/${post.slug}`;
+
   return {
     title: post.title,
     description: post.summary,
+    // 사이트 전체 canonical 부재 → 블로그 상세부터 글별 자기참조 canonical 지정.
+    alternates: { canonical: url },
+    // og를 글별로 지정하지 않으면 layout.tsx의 사이트 기본값(og:title=사이트명, og:url=루트,
+    // og:type=website)을 그대로 상속해 어떤 글을 공유해도 같은 카드가 뜬다.
+    openGraph: {
+      title: post.title,
+      description: post.summary,
+      url,
+      siteName: "부동산 실거래가 대시보드",
+      locale: "ko_KR",
+      type: "article",
+      publishedTime: post.publishedAt,
+    },
+    // twitter를 비워두면 Next가 openGraph에서 title/description을 자동 승계하지만,
+    // 공유 카드 종류(이미지 없는 summary)를 명시해 의도를 고정한다.
+    twitter: {
+      card: "summary",
+      title: post.title,
+      description: post.summary,
+    },
+  };
+}
+
+/**
+ * 블로그 상세 구조화 데이터(BlogPosting). 이 저장소에는 기존 JSON-LD 삽입 패턴이 없어
+ * Next.js 공식 가이드(node_modules/next/dist/docs/01-app/02-guides/json-ld.md)의 표준 방식을 따른다:
+ * page 컴포넌트에서 application/ld+json 스크립트를 렌더하고, JSON.stringify 결과의
+ * 여는 꺾쇠(less-than)를 유니코드 이스케이프(<)로 치환해 XSS를 차단한다.
+ * 조작 금지 원칙: 개인 저자명·로고·평점 등 없는 정보는 넣지 않고, author/publisher는
+ * 사이트 운영 주체(Organization)로만 표기한다.
+ */
+function buildBlogPostingJsonLd(post: BlogPost): object {
+  const url = `${SITE_URL}/blog/${post.slug}`;
+  const organization = {
+    "@type": "Organization",
+    name: "부동산 실거래가 대시보드",
+    url: SITE_URL,
+  };
+
+  return {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    headline: post.title,
+    description: post.summary,
+    datePublished: post.publishedAt,
+    author: organization,
+    publisher: organization,
+    mainEntityOfPage: { "@type": "WebPage", "@id": url },
+    inLanguage: "ko",
   };
 }
 
@@ -46,9 +101,18 @@ export default async function BlogPostPage({
     notFound();
   }
 
+  const jsonLd = buildBlogPostingJsonLd(post);
+
   return (
     <>
       <div className="max-w-3xl mx-auto px-4 py-8">
+        {/* 구조화 데이터(비가시). 화면에 렌더되는 텍스트·레이아웃에는 영향 없음. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
+          }}
+        />
         <nav className="text-xs text-gray-400" aria-label="브레드크럼">
           <Link href="/" className="hover:text-brand">
             홈
