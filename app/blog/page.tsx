@@ -7,7 +7,7 @@ import BlogList from "@/components/blog/BlogList";
 // 블로그/소개/문의하기 헤더 내비 승격 작업 — components/SiteHeader.tsx 참고).
 
 export const metadata: Metadata = {
-  title: "블로그",
+  title: "부동산 정보",
   description:
     "실거래가를 더 잘 읽는 법을 정리합니다. 신고 제도, 면적 용어 등 참고 정보를 다루며 투자 자문을 목적으로 하지 않습니다.",
 };
@@ -19,7 +19,7 @@ export default function BlogIndexPage() {
   return (
     <>
       <div className="max-w-3xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-bold text-gray-900 sm:text-[2rem]">블로그</h1>
+        <h1 className="text-2xl font-bold text-gray-900 sm:text-[2rem]">부동산 정보</h1>
         <p className="mt-2 text-sm text-gray-500">
           실거래가를 더 잘 읽는 법을 정리합니다. 투자 조언이 아닌 참고 정보입니다.
         </p>

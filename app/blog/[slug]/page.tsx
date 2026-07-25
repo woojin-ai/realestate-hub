@@ -119,7 +119,7 @@ export default async function BlogPostPage({
           </Link>
           <span aria-hidden="true"> / </span>
           <Link href="/blog" className="hover:text-brand">
-            블로그
+            부동산 정보
           </Link>
           <span aria-hidden="true"> / </span>
           <Link href="/blog" className="hover:text-brand">
@@ -156,7 +156,7 @@ export default async function BlogPostPage({
 
         <div className="mt-6">
           <Link href="/blog" className="text-sm text-gray-500 hover:text-brand">
-            ← 블로그 목록으로
+            ← 부동산 정보 목록으로
           </Link>
         </div>
       </div>

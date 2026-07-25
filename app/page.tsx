@@ -211,7 +211,7 @@ export default function DashboardPage() {
           </Link>
           <span aria-hidden="true">·</span>
           <Link href="/blog" className="hover:text-gray-600 hover:underline">
-            블로그
+            부동산 정보
           </Link>
         </nav>
       </footer>

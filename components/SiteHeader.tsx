@@ -15,7 +15,7 @@ import { usePathname } from "next/navigation";
 //   pathname이 "/"이면 자기 자신을 렌더링하지 않는다(홈은 자체 헤더가 대신 담당).
 
 export const HEADER_NAV_ITEMS = [
-  { href: "/blog", label: "블로그" },
+  { href: "/blog", label: "부동산 정보" },
   { href: "/about", label: "소개" },
   { href: "/support", label: "문의하기" },
 ] as const;
