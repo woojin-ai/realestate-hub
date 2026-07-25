@@ -8,7 +8,15 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  /*
+    2026-07-25 라운드47 결정#12: 한글 조판 기본기. Geist(라틴 전용, 한글 글리프
+    없음)를 최우선으로 유지해 숫자·영문 타이포는 그대로 두되, Geist가 못 그리는
+    글자(한글)는 브라우저가 글리프 단위로 다음 폰트에 자동 폴백하므로 표준 한글
+    시스템 폰트 스택을 그 다음 순서로 둔다. Arial/Helvetica/sans-serif는 최종
+    라틴/제네릭 폴백으로 유지(기존 값 보존).
+  */
+  --font-sans: var(--font-geist-sans), "Apple SD Gothic Neo", "Malgun Gothic",
+    "맑은 고딕", "Noto Sans KR", Arial, Helvetica, sans-serif;
   --font-mono: var(--font-geist-mono);
 
   /* 부동산 대시보드 커스텀 컬러 (docs/design/dashboard.md 4번 참고) */
@@ -29,7 +37,29 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* --font-sans 토큰(위 @theme inline)을 그대로 참조 — Geist를 무력화하던 기존
+     하드코딩(Arial, Helvetica, sans-serif만 있던 값)을 대체. 이제 Geist가 1순위,
+     한글 시스템 폰트가 2순위, Arial 계열이 최종 폴백이라 font-sans 유틸리티
+     클래스를 쓰는 곳과도 값이 어긋나지 않는다. */
+  font-family: var(--font-sans);
+  /* 2026-07-25 라운드47 결정#12: 한글은 글자 단위가 아니라 어절(단어) 단위로만
+     줄바꿈되게 하고(keep-all), 어절 자체가 컨테이너보다 길어 줄바꿈이 불가능한
+     예외 상황에서만 강제로 끊어 컨테이너 밖으로 넘치지 않게 한다(overflow-wrap).
+     두 속성 모두 상속되므로 이 한 줄로 전역에 적용된다. */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/*
+  표(DealsTable/AptDetailModal) 안 숫자·짧은 값 셀은 위 word-break: keep-all의
+  영향에서 명시적으로 제외한다. 대부분의 셀은 이미 whitespace-nowrap이라 실질
+  영향이 없지만, nowrap이 없는 셀(비율/평수 구간 등)까지 방어적으로 정상 동작을
+  보장하기 위해 표 셀만 word-break: normal로 되돌린다(2026-07-25 라운드47 결정#12,
+  마스터 지시 "표 안 숫자 셀은 word-break: normal 유지" 반영).
+*/
+table td,
+table th {
+  word-break: normal;
 }
 
 /*
