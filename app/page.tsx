@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import RegionSelector from "@/components/RegionSelector";
 import BuildingTypeToggle from "@/components/BuildingTypeToggle";
 import DealTypeTabs from "@/components/DealTypeTabs";
@@ -11,18 +12,46 @@ import MonthlyChart from "@/components/MonthlyChart";
 import DealsTable from "@/components/DealsTable";
 import AiRecommendSection from "@/components/AiRecommendSection";
 import { HeaderNavLinks } from "@/components/SiteHeader";
+import { getRegionByLawdCd } from "@/lib/regions";
 import type { BuildingType, DealType, DealsApiResponse, DealsApiError } from "@/lib/types";
 
 type FetchStatus = "idle" | "loading" | "ready" | "error";
 
-export default function DashboardPage() {
-  const [sido, setSido] = useState("");
-  const [gu, setGu] = useState("");
-  const [lawdCd, setLawdCd] = useState<string | null>(null);
+/**
+ * ?lawd_cd= 쿼리스트링(랭킹 보드 /ranking의 딥링크, 2026-07-25 신규) 최초 진입값을 해석한다.
+ * REGION_CODES에 실재하는 5자리 코드만 통과시키고, 미매칭/형식오류는 무시한다(오표기 방지).
+ */
+function resolveDeepLink(
+  searchParams: URLSearchParams
+): { lawdCd: string; sido: string; gu: string } | null {
+  const code = searchParams.get("lawd_cd");
+  if (!code || !/^\d{5}$/.test(code)) return null;
+  const region = getRegionByLawdCd(code);
+  if (!region) return null;
+  return { lawdCd: code, sido: region.sido, gu: region.gu };
+}
+
+function DashboardContent() {
+  const searchParams = useSearchParams();
+  // 마운트 시 1회만 계산해 고정한다(세터를 쓰지 않는 지연 초기화) — 이후 searchParams가
+  // 바뀌어도(예: 브라우저 뒤로/앞으로가기) 다시 반영하지 않는다. 딥링크는 "최초 진입 시
+  // 초기값"이라는 계약이고, 그 다음은 이 페이지의 일반적인 수동 조회 흐름(조회하기 버튼)을
+  // 그대로 따른다.
+  const [initialDeepLink] = useState(() => resolveDeepLink(searchParams));
+
+  const [sido, setSido] = useState(initialDeepLink?.sido ?? "");
+  const [gu, setGu] = useState(initialDeepLink?.gu ?? "");
+  const [lawdCd, setLawdCd] = useState<string | null>(initialDeepLink?.lawdCd ?? null);
   const [buildingType, setBuildingType] = useState<BuildingType>("아파트");
   const [dealType, setDealType] = useState<DealType>("매매");
 
-  const [status, setStatus] = useState<FetchStatus>("idle");
+  // 딥링크가 있으면 첫 렌더부터 "loading"으로 시작한다(초깃값으로만 반영 — setState 호출이
+  // 아니다). react-hooks/set-state-in-effect가 이 프로젝트에서 error로 켜져 있어(아래 useEffect
+  // 참고, components/AptDetailModal.tsx:156 동일 전례) effect 안에서 "loading"으로 동기
+  // 전환하는 대신 이렇게 초깃값에서 흡수한다.
+  const [status, setStatus] = useState<FetchStatus>(() =>
+    initialDeepLink ? "loading" : "idle"
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [data, setData] = useState<DealsApiResponse | null>(null);
 
@@ -47,14 +76,13 @@ export default function DashboardPage() {
     단독: "🏠 단독",
   };
 
-  const fetchData = async () => {
-    if (!lawdCd) return;
-    setStatus("loading");
-    setErrorMessage(null);
-
+  // 실제 fetch 본체 — 첫 statement가 await라 동기 setState가 없다(react-hooks/set-state-in-effect
+  // 대상 아님, AptDetailModal.tsx:168-184의 async IIFE와 동일 원칙). "조회하기" 버튼(fetchData)과
+  // 딥링크 초기 조회(아래 useEffect) 양쪽이 이 함수 하나를 공유해 로직이 갈라지지 않는다.
+  const runFetch = async (targetLawdCd: string, targetBuildingType: BuildingType) => {
     try {
       const res = await fetch(
-        `/api/data?lawd_cd=${lawdCd}&months=13&building_type=${buildingType}`
+        `/api/data?lawd_cd=${targetLawdCd}&months=13&building_type=${targetBuildingType}`
       );
       const json = (await res.json()) as DealsApiResponse | DealsApiError;
 
@@ -71,6 +99,50 @@ export default function DashboardPage() {
       setStatus("error");
     }
   };
+
+  // "조회하기" 버튼 onClick 전용 — 이벤트 핸들러라 동기 setState("loading")를 바로 써도
+  // react-hooks/set-state-in-effect 규칙 대상이 아니다(effect 본문에서만 금지).
+  const fetchData = () => {
+    if (!lawdCd) return;
+    setStatus("loading");
+    setErrorMessage(null);
+    void runFetch(lawdCd, buildingType);
+  };
+
+  // 랭킹 보드(/ranking)에서 ?lawd_cd= 딥링크로 들어온 경우, 지역만 선택해 두고 사용자가
+  // "조회하기"를 한 번 더 눌러야 한다면 딥링크의 가치가 반감된다(기획 §1-1 "각 행 클릭 →
+  // 딥링크", 디자인 스펙 §8-2 "자동 선택·조회" 요건). "loading" 전환은 위 status 초깃값이
+  // 이미 맡았다.
+  // ⚠️ 이 프로젝트의 react-hooks/set-state-in-effect(error)는 effect가 이름 있는 함수
+  // (runFetch)를 호출하는 것만으로도 "동기 setState 가능성"으로 잡는다(실측: runFetch(...)로
+  // 위임했더니 그대로 재발). AptDetailModal.tsx:168-184처럼 async IIFE를 effect 안에 직접
+  // 인라인해야 통과해, runFetch와 로직이 일부 겹치지만 그대로 따른다(버튼 경로는
+  // fetchData→runFetch 그대로 재사용). 마운트 시 1회만 실행하고, 이후 lawdCd/buildingType이
+  // 바뀌어도(사용자가 셀렉터만 조작한 경우) 재실행되면 안 되므로 의도적으로 빈 deps를 쓴다.
+  useEffect(() => {
+    if (!initialDeepLink) return;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/data?lawd_cd=${initialDeepLink.lawdCd}&months=13&building_type=${buildingType}`
+        );
+        const json = (await res.json()) as DealsApiResponse | DealsApiError;
+
+        if (!res.ok || "error" in json) {
+          setErrorMessage("error" in json ? json.error : "알 수 없는 오류가 발생했습니다.");
+          setStatus("error");
+          return;
+        }
+
+        setData(json);
+        setStatus("ready");
+      } catch {
+        setErrorMessage("네트워크 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+        setStatus("error");
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const summary = data?.summary[dealType];
   const rows = dealType === "매매" ? data?.aptStatsMaeMae : data?.aptStatsJeonse;
@@ -216,5 +288,32 @@ export default function DashboardPage() {
         </nav>
       </footer>
     </>
+  );
+}
+
+/** DashboardContent가 하이드레이션되기 전 초기 HTML에 보일 최소 자리표시자. */
+function DashboardFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <span
+        className="inline-block h-6 w-6 rounded-full border-2 border-brand border-t-transparent animate-spin"
+        aria-hidden="true"
+      />
+    </div>
+  );
+}
+
+/**
+ * DashboardContent가 useSearchParams()를 쓰므로(랭킹 보드 딥링크, 2026-07-25) 정적 빌드 시
+ * "Missing Suspense boundary with useSearchParams" 오류를 피하려면 가장 가까운 상위에 Suspense
+ * 경계가 있어야 한다(node_modules/next/dist/docs/01-app/03-api-reference/04-functions/
+ * use-search-params.md "Prerendering" 절 권장 패턴 그대로 — 개발 모드는 온디맨드 렌더라
+ * suspend되지 않지만, 프로덕션 빌드의 정적 페이지는 반드시 필요하다).
+ */
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<DashboardFallback />}>
+      <DashboardContent />
+    </Suspense>
   );
 }

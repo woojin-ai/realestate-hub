@@ -298,3 +298,60 @@ export const LAWD_TO_SIGUNGU: Record<string, string> = {
   // 세종
   "36110": "36110",
 };
+
+// ── 랭킹 보드(/ranking)용 지역명 역참조 (2026-07-25 신규) ────────────────────
+// REGION_CODES는 지역명→lawdCd 방향으로만 되어 있고, LAWD_TO_SIGUNGU는 건축HUB
+// 코드 매핑이라 지역명이 아니다(위 주석 참고). monthly_stats 행은 lawd_cd만 갖고
+// 있어 화면에 지역명을 표기하려면 반대 방향(lawd_cd → {시도, 구}) 조회가 필요하다.
+// 모듈 최초 사용 시 REGION_CODES를 한 번만 뒤집어 캐시한다.
+
+export interface RegionInfo {
+  /** 시/도 전체 명칭 (예: "서울특별시") — REGION_CODES의 키와 동일 */
+  sido: string;
+  /** 표기용 축약 명칭 (예: "서울") */
+  sidoShort: string;
+  /** 시/군/구명 (예: "강남구") */
+  gu: string;
+}
+
+const SIDO_SHORT_NAMES: Record<string, string> = {
+  서울특별시: "서울",
+  경기도: "경기",
+  인천광역시: "인천",
+  부산광역시: "부산",
+  대구광역시: "대구",
+  대전광역시: "대전",
+  광주광역시: "광주",
+  울산광역시: "울산",
+  세종특별자치시: "세종",
+};
+
+let lawdToRegionCache: Record<string, RegionInfo> | null = null;
+
+function buildLawdToRegion(): Record<string, RegionInfo> {
+  const map: Record<string, RegionInfo> = {};
+  for (const [sido, info] of Object.entries(REGION_CODES)) {
+    const sidoShort = SIDO_SHORT_NAMES[sido] ?? sido;
+    for (const [gu, lawdCd] of Object.entries(info.구)) {
+      map[lawdCd] = { sido, sidoShort, gu };
+    }
+  }
+  return map;
+}
+
+/**
+ * lawd_cd(법정동 시군구코드) → {시도, 시도축약, 구} 역참조.
+ * 매칭 실패 시 null — 호출부가 반드시 결과에서 제외해야 한다(오표기 방지, 랭킹 보드 스펙 §3-4).
+ */
+export function getRegionByLawdCd(lawdCd: string): RegionInfo | null {
+  if (!lawdToRegionCache) lawdToRegionCache = buildLawdToRegion();
+  return lawdToRegionCache[lawdCd] ?? null;
+}
+
+/**
+ * 랭킹 보드 표시용 지역 라벨("서울 강남구"). 세종처럼 구명이 이미 시도축약을 포함하면
+ * ("세종"+"세종시") 중복 표기하지 않고 구명만 쓴다("세종시").
+ */
+export function formatRegionLabel(region: Pick<RegionInfo, "sidoShort" | "gu">): string {
+  return region.gu.startsWith(region.sidoShort) ? region.gu : `${region.sidoShort} ${region.gu}`;
+}

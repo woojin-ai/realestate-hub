@@ -373,6 +373,54 @@ export async function upsertMonthlyStats(
   if (error) throw error;
 }
 
+export interface RankingStatsRow {
+  lawd_cd: string;
+  deal_type: "매매" | "전세";
+  deal_ym: string;
+  avg_price: number | null;
+  deal_count: number;
+}
+
+/**
+ * 랭킹 보드(app/ranking, 2026-07-25 신규)용 monthly_stats 최근 N개월 전량 조회.
+ * PostgREST 기본 1000행 상한을 고려해 loadMonthFromDb와 동일한 PAGE_SIZE 페이지네이션을 쓴다
+ * (전국 114개 시군구 × 매매/전세 × 최근 수개월이면 상한 이내지만 방어적으로 유지).
+ * numeric 컬럼(avg_price)은 Supabase 드라이버 설정에 따라 문자열로 올 수 있어(loadMonthFromDb의
+ * Number() 방어와 동일한 이유) 여기서 숫자로 변환해 반환한다 — 호출부(lib/ranking.ts)는
+ * 순수 계산만 하고 이 타입 이슈를 다시 신경 쓰지 않는다.
+ */
+export async function loadRankingMonthlyStats(
+  supabase: SupabaseClient,
+  buildingType: BuildingType,
+  sinceYm: string
+): Promise<RankingStatsRow[]> {
+  const rows: RankingStatsRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("monthly_stats")
+      .select("lawd_cd,deal_type,deal_ym,avg_price,deal_count")
+      .eq("building_type", buildingType)
+      .gte("deal_ym", sinceYm)
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    for (const row of data) {
+      rows.push({
+        lawd_cd: String(row.lawd_cd),
+        deal_type: row.deal_type as "매매" | "전세",
+        deal_ym: String(row.deal_ym),
+        avg_price: row.avg_price === null ? null : Number(row.avg_price),
+        deal_count: Number(row.deal_count) || 0,
+      });
+    }
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return rows;
+}
+
 /**
  * 오염(캐시 포이즈닝)되어 굳은 지역 캐시를 세 테이블(deals/monthly_stats/
  * fetch_cache_status)에서 통째로 삭제한다. 삭제 후 다음 /api/data 조회가 국토부 API로
