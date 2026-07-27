@@ -207,7 +207,8 @@ type SortDir = "asc" | "desc";
    - PostgREST 기본 1000행 상한이 있으므로 `lib/db-cache.ts`의 `PAGE_SIZE=1000` 페이지네이션 패턴을 그대로 따른다(3개월×매매/전세×약117지역이면 상한 이내지만, 방어적으로 페이지 루프 권장).
 3. **지역·거래유형별 그룹핑** → 각 그룹의 `deal_ym`을 내림차순 정렬:
    - `current` = avg_price!=null **그리고** deal_count>0 인 가장 최근 `deal_ym`.
-   - `prev` = current 바로 아래 `deal_ym`의 avg_price(없으면 null).
+   - `prev` = current의 **바로 직전 달**(`prevYmOf`) 행의 avg_price. 그 달 행이 없거나 avg_price가 null이면 더 과거로 내려가지 않고 `prev=없음`으로 두어 changePct/changeDiff/prevYm을 전부 null로 만든다.
+     - *(변경 근거: 2026-07-27 라운드52 — 종전 규칙("current 바로 아래 `deal_ym`")은 `monthly_stats`에 중간 달이 결측인 지역에서 3개월 간격 변화율을 "전월대비"로 표시하는 문제가 있어 폐기했다.)*
    - `changePct = pctChange(currentAvg, prevAvg)` / `changeDiff = currentAvg!=null && prevAvg!=null ? currentAvg-prevAvg : null` (DealsTable mom 로직과 동일 관례).
    - current를 만족하는 달이 하나도 없으면 `isPending=true`(그 지역 최신 avg가 null이거나 거래 0).
 4. **지역명 매핑**: `lawd_cd` → `{sido, gu}` 역참조(§7-주의①의 신규 헬퍼). 매칭 실패 코드는 목록에서 제외(오표기 방지).

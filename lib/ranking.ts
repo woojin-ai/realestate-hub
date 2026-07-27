@@ -28,10 +28,34 @@ export interface RankingRegionStat {
 export type RankingDataset = Record<"매매" | "전세", RankingRegionStat[]>;
 
 /**
+ * `YYYYMM` 키의 **직전 달**을 같은 `YYYYMM` 형식으로 돌려준다(예: `"202601"` → `"202512"`).
+ *
+ * ⚠️ `new Date()`/`setMonth()` 산술을 일부러 쓰지 않는다. lib/kst.ts의 getKstYm 주석에
+ * 기록된 말일 롤오버 사고(2026-07-31에 offset=1을 주면 `202607`이 나와 "전월 대비"가
+ * 자기 자신과 비교되던 문제)와 같은 부류의 버그를 다시 들이지 않기 위해서다. 다만
+ * getKstYm을 그대로 재사용할 수는 없다 — 그 함수는 "**지금**으로부터 N개월 전"을 계산하는
+ * 반면, 여기서 필요한 것은 "**임의의 YYYYMM 키**의 직전 달"이다(current.deal_ym은 지역마다
+ * 다르고 현재 월과 무관하다). 그래서 Date를 아예 거치지 않고 문자열 → 연·월 정수 산술만
+ * 쓴다. 타임존·말일·일수 차이가 개입할 여지가 구조적으로 없다.
+ *
+ * @param ym 6자리 `YYYYMM` 문자열.
+ * @returns 직전 달의 `YYYYMM`. 형식이 6자리 숫자가 아니거나 월이 1~12를 벗어나면 `null`
+ *   (호출부는 이 경우 "직전 달 행을 찾을 수 없음"으로 안전하게 떨어진다).
+ */
+function prevYmOf(ym: string): string | null {
+  if (!/^\d{6}$/.test(ym)) return null;
+  const year = Number(ym.slice(0, 4));
+  const month = Number(ym.slice(4, 6));
+  if (month < 1 || month > 12) return null;
+  return month === 1 ? `${year - 1}12` : `${year}${String(month - 1).padStart(2, "0")}`;
+}
+
+/**
  * monthly_stats 최근 N개월 원자료(lawd_cd × deal_type × deal_ym) → 지역별 랭킹 행.
  * - current = avg_price!=null 그리고 deal_count>0인 가장 최근 deal_ym(analyzer.ts의
  *   buildSummary currentYm 관례와 동일: 조건을 만족하는 달이 하나도 없으면 isPending).
- * - prev = current 바로 아래(더 과거) deal_ym 중 avg_price!=null인 첫 값.
+ * - prev = current의 **바로 직전 달**(prevYmOf) 행이면서 avg_price!=null인 값. 직전 달이
+ *   비어 있으면 더 과거로 내려가지 않고 changePct/changeDiff/prevYm을 null로 둔다.
  * - 지역명 매칭 실패 코드(REGION_CODES에 없는 lawd_cd)는 오표기 방지를 위해 결과에서
  *   제외한다(스펙 §3-4/§8-1).
  */
@@ -72,7 +96,20 @@ export function buildRankingDataset(rows: RankingStatsRow[]): RankingDataset {
         continue;
       }
 
-      const prev = sorted.find((r) => r.deal_ym < current.deal_ym && r.avg_price !== null);
+      // ⚠️ prev는 current의 **바로 직전 달**일 때만 채택한다. monthly_stats에는 중간 달
+      // 행이 통째로 비어 있는 지역이 실제로 존재해서(2026-07-27 실측: 변화율이 산출된
+      // 129개 계열 중 10개가 202607 vs 202604, 즉 3개월 간격이었다 — 부산 서구/동래구,
+      // 성남 중원구, 이천시, 대전 중구의 매매·전세), "current보다 과거인 가장 가까운 유효
+      // 행"을 쓰면 3개월 변화율이 1개월 변화율들과 같은 순위표·"전월 대비" TOP10에 섞여
+      // 순위 자체가 왜곡된다(라이브에서 대전 중구 +6.25%가 매매 상승 10위에 올라 있었다).
+      // 직전 달 행이 없거나 그 달 avg_price가 null이면 더 과거로 내려가지 않고 변화율을
+      // 비운다. 행 자체는 살린다 — 평균가·거래량은 정상값이라 계속 노출한다(changePct===null
+      // 은 RankingTable에서 "데이터 없음"으로 렌더되고 RankingBoard의 TOP10 집계에서 제외된다).
+      const expectedPrevYm = prevYmOf(current.deal_ym);
+      const prev =
+        expectedPrevYm === null
+          ? undefined
+          : sorted.find((r) => r.deal_ym === expectedPrevYm && r.avg_price !== null);
       const changePct = pctChange(current.avg_price, prev?.avg_price ?? null);
       const changeDiff =
         current.avg_price !== null && prev?.avg_price != null
