@@ -26,6 +26,24 @@
 // 지역이 여러 번 크론을 거쳐도 매번 0개월부터 재시작하지 않고, 이미 저장된 개월은 건너뛰고
 // 나머지만 채워 결국 완료된다. 지역이 완전히 끝난 경우에만 prewarm_progress.last_index를
 // 다음 지역으로 전진시키고, 부분 진행이면 인덱스를 그대로 둬 다음 실행이 이어받는다.
+//
+// 2026-07-28 수정 (W1, docs/planning/monthly-stats-backfill-2026-07-28.md §2-1):
+// monthly_stats에 724셀(기대 114지역 × 13개월 × 2유형 = 2,964 대비)이 비어 있던 사고의
+// **원인 두 겹이 모두 이 파일에 있었다.** 두 원인은 독립이라 한쪽만 고치면 다른 쪽으로 샌다.
+//   (원인 1) 입력이 좁다 — allData에는 "그 실행에서 실제로 fetch한 달"만 담겼다. 13개월이
+//     이미 수집된 지역은 최신월 1개만 fetch하므로 stats도 그 1행만 갱신됐다. 창은 매달
+//     미끄러지는데 지역 재방문 주기는 약 38라운드(114÷3)라, 그 사이 새로 창에 들어온 달은
+//     deals에만 남고 stats 행이 영영 안 생겼다. → W1-b가 고친다.
+//   (원인 2) 쓰기가 과잉 게이팅돼 있다 — stats write가 `if (!incomplete && !anyFailed)`
+//     블록 안에 있어서, 콜드 지역이 시간예산으로 여러 실행에 쪼개져 수집되면 그 중간 달들의
+//     stats는 "완전 무결한 실행"을 한 번도 만나지 못해 영영 안 써졌다. → W1-a가 고친다.
+// 두 수정 모두 새 설계가 아니라 **/api/data(app/api/data/route.ts:126-133, 205-213)의
+// 선례 이식**이다. 그쪽은 처음부터 (i) DB 캐시 히트분까지 전부 allData에 담고 (ii) stats
+// 쓰기를 incomplete류 게이트에 묶지 않아(게이팅되는 건 fetch_cache_status의 ready 마킹뿐)
+// "사용자가 실제로 조회한 지역"은 창 전체 stats가 자동 복구돼 왔다. 결측이 "아무도 조회
+// 안 하고 프리워밍만 스친 지역"에만 남아 있던 이유가 이것이다. 리뷰 기준도 "/api/data와
+// 같은가"로 두면 된다. 이미 생겨버린 724셀의 1회성 복구는 별도 라우트가 맡는다
+// (app/api/admin/backfill-monthly-stats/route.ts, 수동 전용).
 
 import { NextResponse, type NextRequest } from "next/server";
 import { REGION_CODES } from "@/lib/regions";
@@ -34,11 +52,17 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 import {
   dedupeMonthData,
   getCacheStatus,
+  loadMonthFromDb,
   upsertCacheStatus,
   upsertMonthDeals,
   upsertMonthlyStats,
   type FetchCacheStatusRow,
 } from "@/lib/db-cache";
+import {
+  findMissingStatsMonths,
+  indexStatsCells,
+  loadMonthlyStatsCells,
+} from "@/lib/monthly-stats-gaps";
 import type { AllData } from "@/lib/analyzer";
 import { toKstDateString } from "@/lib/kst";
 
@@ -92,13 +116,24 @@ function checkAuth(request: NextRequest): boolean {
  * 지역 하나(lawdCd)의 대시보드 데이터를 프리워밍한다.
  * /api/data(app/api/data/route.ts)의 캐시-우선 로직과 동일한 기준(fetch_cache_status)으로
  * "이미 오늘 신선한지"를 판단해, 신선하지 않은 개월만 국토부 API로 채우고 deals/monthly_stats/
- * fetch_cache_status를 upsert한다. 읽기(loadMonthFromDb)는 필요 없다 — 프리워밍은 쓰기 전용.
+ * fetch_cache_status를 upsert한다.
+ *
+ * 2026-07-28(W1-b)부터는 읽기도 한다 — 예전 주석의 "프리워밍은 쓰기 전용"은 더 이상 맞지 않다.
+ * 창 안인데 monthly_stats 행이 없는 달을 deals에서 되읽어 집계 입력에 합류시킨다(원인 1 수정).
  */
 async function prewarmRegion(
   supabase: ReturnType<typeof getSupabaseServerClient>,
   lawdCd: string,
   deadline: number
-): Promise<{ fetchedMonths: number; incomplete: boolean; monthsCollected: number }> {
+): Promise<{
+  fetchedMonths: number;
+  incomplete: boolean;
+  monthsCollected: number;
+  /** W1-b가 DB에서 되읽어 집계 입력에 합류시킨 달 수(정상 상태면 0이 된다). */
+  statsGapMonths: number;
+  /** W1-b 대상이었으나 deals가 0행이라 건너뛴 달 수(§3 빈 달 규칙). */
+  statsGapSkippedEmpty: number;
+}> {
   const ymList = getYmList(MONTHS);
 
   let cacheRow: FetchCacheStatusRow | null = null;
@@ -133,8 +168,43 @@ async function prewarmRegion(
     if (!canSkip) monthsToFetch.push({ ym, i });
   });
 
-  if (monthsToFetch.length === 0) {
-    return { fetchedMonths: 0, incomplete: false, monthsCollected: baseCollected };
+  // ── W1-b (2026-07-28): 창 안인데 monthly_stats 행이 없는 달을 찾는다 ─────────────
+  // 작은 쿼리 1개(그 지역·아파트·창 13개월). 여기서는 "무엇이 비었는지"만 확정하고, 실제
+  // deals 읽기는 국토부 fetch 루프가 끝난 뒤에 한다 — 프리워밍의 본업(수집)에 시간예산을
+  // 먼저 쓰고, 남는 예산으로만 치유를 하기 위해서다.
+  //
+  // ⚠️ 이 목록을 "창 전체"로 바꾸지 말 것(= 매번 13개월을 다 되읽어 다시 쓰는 구현).
+  // 그렇게 하면 지역 방문 때마다 13개월 × 2유형 = 26행의 computed_at이 전부 그날로 덮인다.
+  // computed_at은 현재 사실상 "그 달을 수집한 시점"의 유일한 흔적이고, 결정 #13 논의와
+  // 2026-07-27 발행 블로그가 그 값을 근거로 쓰고 있다. 결측분만 쓰면 그 증거가 보존되고
+  // 비용도 준다(정상 상태에서는 결측이 0이라 추가 로드 자체가 사라진다).
+  // 이건 성능 문제가 아니라 **감사 가능성** 문제다.
+  const fetchYms = new Set(monthsToFetch.map((m) => m.ym));
+  let statsGapYms: string[] = [];
+  try {
+    const cells = await loadMonthlyStatsCells(
+      supabase,
+      BUILDING_TYPE,
+      ymList[ymList.length - 1],
+      lawdCd
+    );
+    statsGapYms = findMissingStatsMonths(indexStatsCells(cells), lawdCd, ymList).filter(
+      // 이번에 fetch하는 달은 어차피 allData에 담기므로 DB에서 또 읽을 필요가 없다.
+      (ym) => !fetchYms.has(ym)
+    );
+  } catch (err) {
+    // 조회 실패는 치유를 다음 방문으로 미룰 뿐, 수집 자체를 막지 않는다(best-effort).
+    console.error(`[prewarm: monthly_stats 결측 조회 실패] ${lawdCd}`, err);
+  }
+
+  if (monthsToFetch.length === 0 && statsGapYms.length === 0) {
+    return {
+      fetchedMonths: 0,
+      incomplete: false,
+      monthsCollected: baseCollected,
+      statsGapMonths: 0,
+      statsGapSkippedEmpty: 0,
+    };
   }
 
   const allData: AllData = {};
@@ -144,6 +214,10 @@ async function prewarmRegion(
   // 있으면, 그 지역을 이번 실행에서 "ready(완료)"로 확정하지 않는다(다음 크론이 재시도).
   // 대형 지역(예: 화성 41590)이 레이트리밋에 걸려도 빈 데이터가 완료로 굳는 걸 막는 핵심.
   let anyFailed = false;
+  // 실패한 "달"의 집합. W1-a(2026-07-28)가 stats 집계 입력에서 이 달들만 정확히 제외하는 데
+  // 쓴다(/api/data:207-210의 statsData와 동일한 규칙). anyFailed(불리언)만으로는 "어느 달이
+  // 오염됐는지"를 알 수 없어 지역 전체를 통째로 막을 수밖에 없었던 것이 원인 2였다.
+  const failedYms = new Set<string>();
   // 2026-07-15 "같은 지역에서 진행이 안 됨" 사고 대응: 기존에는 지역 하나를 13개월 다
   // 끝내야만(!incomplete) fetch_cache_status를 갱신했다. 그래서 콜드 지역이 시간예산
   // 부족으로 중간에 멈추면 이미 deals 테이블엔 upsert된 개월이 있는데도 months_collected가
@@ -191,7 +265,10 @@ async function prewarmRegion(
       // data를 쓸 뿐 조건·흐름이 그대로다.
       const data = dedupeMonthData(lawdCd, BUILDING_TYPE, ym, rawData);
       allData[ym] = data;
-      if (failed) anyFailed = true;
+      if (failed) {
+        anyFailed = true;
+        failedYms.add(ym);
+      }
       let upsertOk = true;
       // 실패한 달은 deals에 영속화하지 않는다(빈/부분 데이터를 정상 수집분처럼 굳히지 않음).
       if (!failed) {
@@ -236,8 +313,74 @@ async function prewarmRegion(
     }
   }
 
+  // ── W1-b (2026-07-28): stats 결측 달을 deals에서 되읽어 집계 입력에 합류시킨다 ──────
+  // 위에서 확정한 statsGapYms(창 안인데 monthly_stats 행이 없고 이번에 fetch하지도 않는 달)를
+  // loadMonthFromDb로 읽어 allData에 넣는다. 그러면 바로 아래 W1-a의 upsertMonthlyStats가
+  // 그 달까지 함께 써서, 지역이 다음에 프리워밍될 때 창 안 구멍이 자동으로 메워진다.
+  // 국토부 호출이 아니라 Supabase 읽기라 시간예산 영향이 작고, 한 번 메워지면 다음 방문부터는
+  // 결측이 0이라 추가 로드 자체가 사라진다(정상 상태에서 비용 증가 없음).
+  let statsGapMonths = 0;
+  let statsGapSkippedEmpty = 0;
+  for (const ym of statsGapYms) {
+    // 예산이 다 됐으면 치유를 여기서 멈춘다. incomplete로 격상하지는 않는다 — 치유는
+    // best-effort 부가 작업이라, 이걸로 지역 인덱스를 붙잡으면 초회 순회(현재 진행 중)가
+    // 통째로 느려진다. 못 메운 달은 다음 방문 때 같은 경로로 다시 잡힌다.
+    if (Date.now() >= deadline) break;
+    if (allData[ym]) continue; // 이번에 fetch돼 이미 담긴 달(방어적)
+    try {
+      const dbData = await loadMonthFromDb(supabase, lawdCd, BUILDING_TYPE, ym);
+      // 빈 달 규칙(기획안 §3): deals가 매매·전세·월세 통틀어 0행이면 쓰지 않는다.
+      // DB만으로는 "실제로 거래 0건인 달"과 "수집이 안 된 달"을 구분할 수 없어서, 후자에
+      // {avg:null, count:0}을 쓰면 검증 불가능한 주장을 사실처럼 확정 기록하게 된다.
+      // (이번에 국토부에서 직접 fetch한 달은 다르다 — 0건이라는 양성 증거를 방금 얻었으므로
+      //  그 달의 {null, 0}은 참인 진술이라 아래 W1-a에서 그대로 쓴다.)
+      if (dbData.매매.length + dbData.전세.length + dbData.월세.length === 0) {
+        statsGapSkippedEmpty += 1;
+        continue;
+      }
+      allData[ym] = dbData;
+      statsGapMonths += 1;
+    } catch (err) {
+      console.error(`[prewarm: stats 결측 달 deals 조회 실패] ${lawdCd} ${ym}`, err);
+    }
+  }
+
+  // ── W1-a (2026-07-28): monthly_stats 쓰기를 무결-실행 게이트 밖으로 뺀다 ────────────
+  // 예전에는 이 upsertMonthlyStats가 아래 `if (!incomplete && !anyFailed)` 블록 안에 있었다.
+  // 그래서 콜드 지역이 시간예산으로 쪼개져 수집되면 중간 달의 stats가 영영 안 써졌다(원인 2).
+  //
+  // 🔴 왜 게이트 밖으로 빼도 캐시 포이즈닝이 재발하지 않는가 (되돌리기 전에 반드시 읽을 것)
+  //   게이트의 존재 이유는 캐시 포이즈닝 방지 — 빈/부분 fetch 결과가 "완료"로 굳어 이후 조회가
+  //   그 오염 캐시를 계속 서빙하는 것을 막는 것이다. 그런데 그 위험은 **failed 플래그 단위로
+  //   이미 정확히 표현돼 있다.**
+  //     • failed가 아닌 달 = collectMonth가 성공했고 upsertMonthDeals까지 마친 달이다. 그 달의
+  //       stats를 쓰는 것은 **이미 영속화된 deals를 요약하는 행위**일 뿐, 새로운 주장을 만들지
+  //       않는다. deals가 진실이면 그 요약도 진실이다.
+  //     • incomplete(시간예산 초과)는 "이 지역의 **다른 달**을 아직 못 했다"는 뜻이지 "이번에
+  //       처리한 달이 오염됐다"는 뜻이 아니다 — stats를 막을 근거가 되지 않는다.
+  //     • anyFailed도 마찬가지로 "이 지역의 **어떤 달**이 실패했다"는 지역 단위 신호다. 실패한
+  //       그 달만 아래 statsData에서 제외하면 오염원은 정확히 차단된다.
+  //   그리고 포이즈닝의 실제 차단 지점은 stats가 아니라 **fetch_cache_status의 ready 마킹**이다
+  //   (ready여야 이후 조회가 재-fetch를 건너뛴다). 그 마킹은 지금도 게이트 안에 그대로 남겨 둔다.
+  //   같은 구조가 /api/data(:205-213 stats는 게이트 밖, :244-252 ready만 게이트 안)에서 이미
+  //   수개월째 돌고 있고, 그 경로로 서빙된 지역들이 정확히 결측 없는 지역들이다.
+  //   ⚠️ 이 upsertMonthlyStats를 다시 게이트 안으로 옮기면 724셀 결측 사고가 그대로 재발한다.
+  const statsData: AllData = {};
+  for (const [ym, data] of Object.entries(allData)) {
+    if (!failedYms.has(ym)) statsData[ym] = data;
+  }
+  if (Object.keys(statsData).length > 0) {
+    try {
+      for (const dealType of ["매매", "전세"] as const) {
+        await upsertMonthlyStats(supabase, lawdCd, BUILDING_TYPE, dealType, statsData);
+      }
+    } catch (err) {
+      console.error(`[prewarm: monthly_stats 영속화 실패] ${lawdCd}`, err);
+    }
+  }
+
   // 예산 초과로 중간에 끊었으면(incomplete) 이번 지역은 13개월 전체를 못 채웠으므로
-  // monthly_stats/cache status를 "ready"로 확정하지 않는다 — 이미 개별 upsertMonthDeals된
+  // cache status를 "ready"로 확정하지 않는다 — 이미 개별 upsertMonthDeals된
   // deals 행과 위에서 배치마다 갱신한 months_collected는 남아 있으니(다음 실행에서 같은
   // 달을 다시 upsert해도 멱등이라 안전) 손실은 없고, 다음 크론 실행이 이 지역을
   // (부분 진행된 지점부터, 남은 개월만) 이어받는다.
@@ -246,11 +389,13 @@ async function prewarmRegion(
   // "ready"로 확정하지 않는다 — 화성 41590처럼 완주(!incomplete)했더라도 빈/부분 데이터를
   // 완료로 굳히면 이후 조회가 그 캐시를 재사용해 0건이 고착되기 때문(포이즈닝의 핵심 원인).
   // 실패 지점까지만 반영된 months_collected("collecting")를 남겨 다음 크론이 재시도한다.
+  //
+  // 2026-07-28: stats 쓰기가 위로 빠져나가면서 이 블록은 ready 마킹 전용이 됐다. 예전에는
+  // 한 try 안에 있어서 stats upsert가 실패하면 ready 마킹도 함께 건너뛰었는데, 이제는
+  // 독립적이다 — stats가 실패해도 수집 자체는 완료됐으므로 ready로 확정하는 것이 맞고,
+  // 못 쓴 stats는 다음 방문 때 W1-b가 결측으로 다시 잡아 메운다.
   if (!incomplete && !anyFailed) {
     try {
-      for (const dealType of ["매매", "전세"] as const) {
-        await upsertMonthlyStats(supabase, lawdCd, BUILDING_TYPE, dealType, allData);
-      }
       const newMonthsCollected = Math.max(baseCollected, MONTHS);
       const oldestYm = ymList[ymList.length - 1];
       await upsertCacheStatus(supabase, lawdCd, BUILDING_TYPE, {
@@ -260,11 +405,17 @@ async function prewarmRegion(
       });
       currentMonthsCollected = newMonthsCollected;
     } catch (err) {
-      console.error(`[prewarm: 영속화 실패] ${lawdCd}`, err);
+      console.error(`[prewarm: 캐시 상태 확정 실패] ${lawdCd}`, err);
     }
   }
 
-  return { fetchedMonths: fetchedCount, incomplete, monthsCollected: currentMonthsCollected };
+  return {
+    fetchedMonths: fetchedCount,
+    incomplete,
+    monthsCollected: currentMonthsCollected,
+    statsGapMonths,
+    statsGapSkippedEmpty,
+  };
 }
 
 async function getProgress(supabase: ReturnType<typeof getSupabaseServerClient>): Promise<number> {
@@ -325,6 +476,10 @@ export async function GET(request: NextRequest) {
     fetchedMonths: number;
     incomplete?: boolean;
     monthsCollected?: number;
+    // W1-b 관측치 — QA가 "치유가 실제로 일어났는지"와 "정상 상태에서 0으로 수렴하는지"를
+    // 이 두 값으로 본다(기획안 §5 V6).
+    statsGapMonths?: number;
+    statsGapSkippedEmpty?: number;
   }> = [];
   let count = 0;
 
@@ -347,6 +502,8 @@ export async function GET(request: NextRequest) {
         fetchedMonths: result.fetchedMonths,
         incomplete,
         monthsCollected: result.monthsCollected,
+        statsGapMonths: result.statsGapMonths,
+        statsGapSkippedEmpty: result.statsGapSkippedEmpty,
       });
     } catch (err) {
       console.error(`[prewarm: 지역 처리 실패] ${region.sido} ${region.gu}`, err);
