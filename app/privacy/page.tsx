@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SITE_URL } from "@/lib/site";
 
 // 내부 기록용 메모(사이트 비노출):
 // 본 개인정보처리방침은 변호사 등 법률 전문가의 검토를 거치지 않은 표준 템플릿 기반 초안이다.
@@ -7,10 +8,27 @@ import Link from "next/link";
 // 대한 정확성을 보증하지 않는다. 회원가입 기능 도입, 유료화, 대량 트래픽 발생 등 상황 변화 시
 // 정식 법률 검토를 다시 받는 것을 권장한다. (기획팀, 2026-07-17)
 
+const TITLE = "개인정보처리방침";
+const DESCRIPTION =
+  "부동산 실거래가 대시보드의 개인정보 수집·이용 및 쿠키, 광고 게재와 관련된 개인정보처리방침을 안내합니다.";
+const PAGE_URL = `${SITE_URL}/privacy`;
+
 export const metadata: Metadata = {
-  title: "개인정보처리방침",
-  description:
-    "부동산 실거래가 대시보드의 개인정보 수집·이용 및 쿠키, 광고 게재와 관련된 개인정보처리방침을 안내합니다.",
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: { canonical: PAGE_URL },
+  // canonical과 og:url은 쌍으로 지정한다(app/blog/[slug]/page.tsx와 동일 취지).
+  // og를 생략하면 layout.tsx 기본값(og:url=루트, og:title=사이트명)을 상속해 canonical과
+  // 모순되고, 공유 시 홈 카드가 뜬다. openGraph는 부모와 깊은 병합되지 않고 대체되므로
+  // siteName·locale·type까지 app/ranking/page.tsx와 같은 구성으로 모두 적는다.
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: PAGE_URL,
+    siteName: "부동산 실거래가 대시보드",
+    locale: "ko_KR",
+    type: "website",
+  },
 };
 
 export default function PrivacyPage() {

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import ContactForm from "@/components/ContactForm";
+import { SITE_URL } from "@/lib/site";
 
 // 내부 기록용 메모(사이트 비노출):
 // CS팀 FAQ 초안(docs/cs/2026-07-15-faq-draft.md)과 이용약관/개인정보처리방침 톤을 기준으로
@@ -8,10 +9,27 @@ import ContactForm from "@/components/ContactForm";
 // 2026-07-17: 문의 채널을 mailto 링크에서 실제 접수 폼(/api/contact, Resend 발송)으로 전환.
 // 계산기 허브와 Resend 계정/키를 공유하되 제목 접두어로 사이트를 구분한다.
 
+const TITLE = "문의하기";
+const DESCRIPTION =
+  "부동산 실거래가 대시보드 이용 중 자주 묻는 질문(FAQ)과 오류 제보·문의 방법을 안내합니다.";
+const PAGE_URL = `${SITE_URL}/support`;
+
 export const metadata: Metadata = {
-  title: "문의하기",
-  description:
-    "부동산 실거래가 대시보드 이용 중 자주 묻는 질문(FAQ)과 오류 제보·문의 방법을 안내합니다.",
+  title: TITLE,
+  description: DESCRIPTION,
+  alternates: { canonical: PAGE_URL },
+  // canonical과 og:url은 쌍으로 지정한다(app/blog/[slug]/page.tsx와 동일 취지).
+  // og를 생략하면 layout.tsx 기본값(og:url=루트, og:title=사이트명)을 상속해 canonical과
+  // 모순되고, 공유 시 홈 카드가 뜬다. openGraph는 부모와 깊은 병합되지 않고 대체되므로
+  // siteName·locale·type까지 app/ranking/page.tsx와 같은 구성으로 모두 적는다.
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: PAGE_URL,
+    siteName: "부동산 실거래가 대시보드",
+    locale: "ko_KR",
+    type: "website",
+  },
 };
 
 type FaqItem = {
