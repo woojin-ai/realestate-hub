@@ -129,6 +129,16 @@ export default function RankingBoard({ dataset, referenceMonth, updatedAt, loadE
           좌우됩니다(대형 평형 거래가 많으면 평균가가 올라갑니다). 따라서 평균가 순위는{" "}
           <strong>평(3.3㎡)당 가격 순위와 다릅니다.</strong>
         </p>
+        <p className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500">
+          이 표에서 원하는 지역만 골라 보는 방법은{" "}
+          <Link
+            href="/blog/ranking-board-usage-howto"
+            className="text-brand underline underline-offset-2"
+          >
+            랭킹 화면에서 원하는 지역 찾는 법
+          </Link>
+          에 따로 정리했습니다.
+        </p>
       </section>
 
       {loadError && (
