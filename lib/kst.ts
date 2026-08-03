@@ -22,6 +22,11 @@
 //  lib/molit-api.ts getYmList, lib/analyzer.ts getMonthKey,
 //  app/api/recommend/route.ts 신축기준연도 폴백)
 //
+// ※ 여기에 더해 **임의의 YYYYMM 키 기준** 월 산술(ymMinusMonths)도 이 모듈에 둔다.
+//   그쪽은 "지금"이 개입하지 않아 KST와 무관하지만, 월 키 산술 사본이 파일마다 흩어져
+//   말일 롤오버 버그가 재발하는 것을 막으려면 한곳에 모아 두는 편이 낫다.
+//   (소비처: lib/analyzer.ts buildSummary, lib/ranking.ts buildRankingDataset)
+//
 // ※ 단, 아래 클라이언트 컴포넌트 3곳은 이 규칙의 **의도적 예외**로 남겨 두고
 //   `new Date().getFullYear()`를 그대로 쓴다. 변수명이 둘로 갈리니 grep할 때 주의:
 //     - `CUR_YEAR`   components/AiRecommendSection.tsx:33 (폼 초기값 `CUR_YEAR - 10`)
@@ -156,6 +161,52 @@ export function getKstYm(monthsAgo = 0, instant?: Date | string): string {
   const year = Math.floor(totalMonths / 12);
   const month = totalMonths - year * 12 + 1; // 1~12 (음수 나머지 걱정 없이 복원)
   return `${year}${String(month).padStart(2, "0")}`;
+}
+
+/**
+ * **임의의** `YYYYMM` 키에서 `monthsAgo`개월을 뺀 `YYYYMM`을 돌려준다.
+ *
+ * getKstYm과의 차이는 **기준점**이다. getKstYm은 "**지금**(KST)으로부터 N개월 전"을
+ * 계산하지만, 이 함수는 "**주어진 달**로부터 N개월 전"을 계산한다 — 현재 시각도
+ * 타임존도 개입하지 않는다(문자열 → 정수 산술뿐). 그래서 지역마다 기준월이 다른
+ * 데이터(monthly_stats의 `deal_ym`, buildSummary의 `currentYm`)에 쓸 수 있다.
+ *
+ * ⚠️ `new Date()`/`setMonth()` 산술을 일부러 쓰지 않고 getKstYm과 **같은 정수 접기**
+ * (`year * 12 + (month - 1)`)를 쓴다. 위 getKstYm 주석에 기록된 말일 롤오버 사고
+ * (2026-07-31에 offset=1이 `202607`을 돌려줘 "전월 대비"가 자기 자신과 비교되던 문제)와
+ * 같은 부류의 버그를 다시 들이지 않기 위해서다. 월 키 산술을 이 모듈 밖에서 다시
+ * 구현하지 마라 — 이 함수가 생기기 전 lib/ranking.ts에 1개월 전용 사본(`prevYmOf`)이
+ * 따로 있었고, 2026-08-04 라운드 56에서 이 함수로 흡수했다.
+ *
+ * @param ym 6자리 `YYYYMM` 문자열.
+ * @param monthsAgo 몇 개월 전인지(0 = 그 달 자신). 음수를 주면 미래 월.
+ *   절댓값 {@link MAX_MONTHS_AGO} 이하의 안전한 정수여야 한다.
+ * @returns 계산된 `YYYYMM`. 입력이 위 조건을 어기면 `null`.
+ *
+ *   ⚠️ 검증 실패 시 정책이 getKstYm(throw)과 **일부러 다르다**. getKstYm의 입력은
+ *   호출부의 루프 인덱스·리터럴이라 잘못된 값이 오면 그건 코드 버그이고, 그 결과가
+ *   수집 대상 월이 되므로 즉시 터뜨리는 편이 낫다. 반면 이 함수의 `ym`은 **데이터에서
+ *   온다**(DB의 deal_ym, 집계 키). 그 값 하나가 이상하다고 페이지 전체를 500으로
+ *   떨어뜨릴 이유가 없고, 호출부는 `null`을 "비교 대상 월 없음"으로 받아 변화율만
+ *   비우면 안전하게 축소된다. lib/ranking.ts의 기존 `prevYmOf` 정책을 그대로 승계한 것이다.
+ *
+ * @example
+ * ymMinusMonths("202601", 1);  // "202512"
+ * ymMinusMonths("202607", 12); // "202507"
+ * ymMinusMonths("202607", 0);  // "202607"
+ */
+export function ymMinusMonths(ym: string, monthsAgo: number): string | null {
+  if (!/^\d{6}$/.test(ym)) return null;
+  const year = Number(ym.slice(0, 4));
+  const month = Number(ym.slice(4, 6));
+  if (month < 1 || month > 12) return null;
+  if (!Number.isSafeInteger(monthsAgo) || Math.abs(monthsAgo) > MAX_MONTHS_AGO) {
+    return null;
+  }
+  const totalMonths = year * 12 + (month - 1) - monthsAgo;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonth = totalMonths - targetYear * 12 + 1; // 1~12 (음수 나머지 걱정 없이 복원)
+  return `${targetYear}${String(targetMonth).padStart(2, "0")}`;
 }
 
 /**

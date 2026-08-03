@@ -3,7 +3,7 @@
 // 오피스텔/도시형 필터 키워드 리스트는 원본 그대로 이관(임의 축소 금지).
 
 import type { MonthData, TradeRecord, RentRecord } from "./molit-api";
-import { getKstYm } from "./kst";
+import { getKstYm, ymMinusMonths } from "./kst";
 
 type DealRecord = TradeRecord | RentRecord;
 
@@ -182,11 +182,19 @@ function isForceApt(name: string): boolean {
 }
 
 /**
- * 원본 analyzer.py get_month_key: offset개월 전 YYYYMM.
+ * 원본 analyzer.py get_month_key: **지금(KST)으로부터** offset개월 전 YYYYMM.
  *
- * 월 경계 계산은 getYmList(molit-api.ts)와 **같은 기준**(lib/kst.ts getKstYm, KST)을
- * 쓴다 — 이 함수가 만든 키로 buildSummary가 monthly(= getYmList가 수집한 달들)를
- * 조회하므로, 두 함수의 "이번 달"이 어긋나면 변동률이 엉뚱한 달을 가리킨다.
+ * 월 경계 계산은 getYmList(molit-api.ts)와 **같은 기준**(lib/kst.ts getKstYm, KST)을 쓴다 —
+ * 수집 창(getYmList)과 "이번 달"이 어긋나면 안 되기 때문이다.
+ *
+ * ⚠️ 2026-08-04 라운드 56부터 **buildSummary는 이 함수를 쓰지 않는다.** 변동률의 비교
+ * 기준은 "달력상 이번 달"이 아니라 `currentYm`이어야 하고(최신월 신고가 0건이면 둘이
+ * 어긋난다), 그쪽은 `lib/kst.ts ymMinusMonths(currentYm, offset)`으로 계산한다. 자세한
+ * 근거는 buildSummary의 getAvgAt 주석 참고. 이 함수를 그 자리에 다시 끌어다 쓰지 마라.
+ *
+ * 현재 소비처는 "지금이 몇 월인가"가 정말로 기준인 곳뿐이다: 부분월 배지 판정
+ * (components/SummaryCards.tsx, components/MonthlyChart.tsx의 `=== getMonthKey(0)`),
+ * 랭킹 조회 창(app/ranking/page.tsx `getMonthKey(3)`).
  *
  * getKstYm으로 옮기면서 기존 `setMonth(getMonth() - offset)` 방식의 말일 롤오버
  * 버그도 함께 해소됐다(2026-07-31에 offset=1 → 6월 31일이 7월 1일로 넘어가 `202607`
@@ -274,15 +282,45 @@ export function buildSummary(allData: AllData): Summary {
       sortedYms.find((ym) => monthly[ym].avg !== null) ?? null;
     const currentAvg = currentYm ? monthly[currentYm].avg : null;
 
+    /**
+     * 변동률의 **비교 대상 달**의 평균가. `currentYm`에서 정확히 `offset`개월 뺀 달만 본다.
+     *
+     * ⚠️ 두 가지를 되돌리지 마라. 2026-08-04 라운드 56에서 라이브 실측으로 확정한
+     * 수정이고, 되돌리면 아래 두 결함이 그대로 재발한다.
+     *
+     * (1) **기준점은 `currentYm`이다 — 달력상 이번 달이 아니다.**
+     *     기존 코드는 `getMonthKey(offset)`(= 지금으로부터 offset개월 전)을 썼다. 그런데
+     *     `currentAvg`는 "달력상 이번 달"이 아니라 `currentYm`(= avg가 있는 가장 최근 달)의
+     *     값이라, 최신월 신고가 아직 0건이면 두 축이 한 달씩 어긋난다. 2026-08-04 실측:
+     *     전국 deals에 202608이 0건이라 모든 지역이 `currentYm=202607`인데 `getMonthKey(1)`도
+     *     `202607`이어서 **"전월 대비"가 자기 자신과의 비교(항상 0.00% ━)**가 됐다
+     *     (강남 11680 참값 +5.81%, 종로 11110 -34.15%, 부산 연제 26470 -11.09%가 전부 0.00%로
+     *     표시). 나머지 카드도 한 달씩 밀려 "3개월 대비"가 실제로는 2개월, "6개월"이 5개월,
+     *     "1년"이 11개월 간격이었다. 라벨과 실제 간격이 어긋나는 것이라 값이 커 보이거나
+     *     작아 보이는 문제가 아니라 **표기 자체가 거짓**이다.
+     *
+     * (2) **슬라이딩 폴백(목표 달이 없으면 더 과거로 내려가기)을 쓰지 않는다.**
+     *     목표 달이 `monthly`에 없거나 `avg === null`이면 `null`을 돌려 카드를 "수집 중"으로
+     *     떨어뜨린다. 이 판단에는 저장소 안에 선례가 있다 — `lib/ranking.ts`의
+     *     `buildRankingDataset`은 `prev`를 current의 **바로 직전 달**로만 잡고 없으면 변화율을
+     *     비운다. 그 근거 주석(2026-07-27 실측)이 말하는 사고가 정확히 이것이다: "current보다
+     *     과거인 가장 가까운 유효 행"을 쓰면 3개월 간격 변화율이 1개월 간격 변화율과 같은
+     *     표에 섞여 순위 자체가 왜곡된다(라이브에서 대전 중구 +6.25%가 매매 상승 10위에
+     *     올라 있었다). `buildSummary`는 그동안 정반대로 동작하고 있었고, 이 수정으로 두
+     *     모듈의 관례가 일치한다. 폴백을 되살리면 "3개월 대비" 카드가 지역에 따라 조용히
+     *     2개월·5개월 간격이 되는 상태로 돌아간다.
+     *
+     * 알려진 대가: 수집 창은 달력 기준 13개월(app/api/data/route.ts DEFAULT_MONTHS)이라
+     * `currentYm`이 전월로 잡히는 동안 "1년 대비"의 목표 달(`currentYm - 12`)이 창 밖으로
+     * 하루아침에 벗어나 전국이 "수집 중"이 된다. **이걸 살리겠다고 창을 넓히지 마라** —
+     * 수집량·monthly_stats 기대집합·프리워밍 statsGap 판정이 함께 흔들린다(별건 티켓).
+     */
     const getAvgAt = (offset: number): number | null => {
-      const target = getMonthKey(offset);
-      if (monthly[target] && monthly[target].avg !== null) {
-        return monthly[target].avg;
-      }
-      const older = Object.keys(monthly)
-        .sort()
-        .filter((ym) => ym <= target && monthly[ym].avg !== null);
-      return older.length > 0 ? monthly[older[older.length - 1]].avg : null;
+      if (currentYm === null) return null;
+      const target = ymMinusMonths(currentYm, offset);
+      if (target === null) return null;
+      const stat = monthly[target];
+      return stat && stat.avg !== null ? stat.avg : null;
     };
 
     const changes = {
