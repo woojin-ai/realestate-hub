@@ -1,4 +1,5 @@
-import { formatBlogDateKo, type BlogSection } from "@/lib/blog";
+import Link from "next/link";
+import { formatBlogDateKo, type BlogInlineSegment, type BlogSection } from "@/lib/blog";
 import Callout from "./Callout";
 
 // 본문 섹션 배열을 순서대로 렌더한다. 배열 순서 자체가 화면 순서(관례: [0]=도입부, [1]=면책 콜아웃).
@@ -6,6 +7,27 @@ import Callout from "./Callout";
 
 interface BlogBodyProps {
   sections: BlogSection[];
+}
+
+// 문단 안의 인라인 내부링크 렌더(docs/design/blog-inline-links-spec-2026-08-04.md §1-1).
+// 클래스는 저장소 내 기존 인라인 내부링크 문자열 그대로다(support/privacy/RankingBoard, 스펙 §4-1).
+// 🔴 target="_blank"·rel·sr-only·aria-label·title·화살표를 붙이지 마라(내부 이동, 스펙 §3-1·§4-2).
+function renderParagraphContent(section: {
+  text?: string;
+  segments?: BlogInlineSegment[];
+}): React.ReactNode {
+  // 🔴 segments가 없으면 문자열을 그대로 반환한다(배열로 감싸지 마라).
+  //    그래야 전환하지 않은 기존 문단의 DOM이 완전히 동일하다(스펙 §1-1·§7-2-5).
+  if (!section.segments) return section.text;
+  return section.segments.map((seg, i) =>
+    seg.slug ? (
+      <Link key={i} href={`/blog/${seg.slug}`} className="text-brand underline underline-offset-2">
+        {seg.text}
+      </Link>
+    ) : (
+      seg.text
+    )
+  );
 }
 
 export default function BlogBody({ sections }: BlogBodyProps) {
@@ -19,7 +41,7 @@ export default function BlogBody({ sections }: BlogBodyProps) {
                 key={index}
                 className="text-sm sm:text-base text-gray-600 leading-relaxed mt-4 first:mt-0"
               >
-                {section.text}
+                {renderParagraphContent(section)}
               </p>
             );
           case "heading":
