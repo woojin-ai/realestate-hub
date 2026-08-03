@@ -204,11 +204,28 @@ export function getMonthKey(offset = 0): string {
   return getKstYm(offset);
 }
 
+/**
+ * 평균 매매가에 **실제로 쓰이는** 레코드인가. avgTradePrice와 countAvgSample이 공유한다.
+ *
+ * 이 술어를 두 곳에 복사하지 마라. "평균을 만든 필터"와 "평균에 쓰인 건수를 세는 필터"가
+ * 갈리는 순간 화면의 건수 캡션이 거짓이 된다(표본 하한 공시 스펙 §3-4가 지목한 결함이
+ * 정확히 그 형태다 — countNewContracts는 deposit > 0이 빠져 있어 값이 다르다).
+ */
+const isTradeAvgSample = (r: TradeRecord): boolean => r.price > 0;
+
 export function avgTradePrice(records: TradeRecord[]): number | null {
-  const prices = records.map((r) => r.price).filter((p) => p > 0);
+  // 기존 `map(price).filter(p > 0)`과 결과가 완전히 동일하다(같은 조건, 순서만 뒤바뀜).
+  const prices = records.filter(isTradeAvgSample).map((r) => r.price);
   if (prices.length === 0) return null;
   return Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
 }
+
+/** 평균 전세가에 **실제로 쓰이는** 레코드인가. isTradeAvgSample과 같은 취지의 공유 술어다. */
+const isJeonseAvgSample = (r: RentRecord, onlyNew: boolean): boolean => {
+  if (!(r.deposit > 0)) return false;
+  if (onlyNew && r.contract_type === "갱신") return false;
+  return true;
+};
 
 /**
  * only_new=true (기본): 신규 계약만 평균 (갱신 제외)
@@ -219,15 +236,31 @@ export function avgJeonseDeposit(
   records: RentRecord[],
   onlyNew = true
 ): number | null {
-  const filtered = records.filter((r) => {
-    if (!(r.deposit > 0)) return false;
-    if (onlyNew && r.contract_type === "갱신") return false;
-    return true;
-  });
+  const filtered = records.filter((r) => isJeonseAvgSample(r, onlyNew));
   if (filtered.length === 0) return null;
   return Math.round(
     filtered.reduce((a, r) => a + r.deposit, 0) / filtered.length
   );
+}
+
+/**
+ * 그 달의 **평균가 계산에 실제로 쓰인 거래 건수**.
+ *
+ * `MonthlyStat.count`(= records.length, 그 달 전체 신고 건수)와 **다른 값**이고, 전세의
+ * `countNewContracts`(갱신만 제외, deposit > 0 없음)와도 **다른 값**이다. 셋을 섞어 쓰지 마라.
+ * 위 두 술어를 그대로 태우므로 정의상 `avg !== null ⇔ countAvgSample >= 1`이 성립한다.
+ *
+ * 전세는 buildMonthlyStats가 avgJeonseDeposit을 기본값(onlyNew=true)으로 부르므로 여기서도
+ * true를 고정한다. 매매도 "전체와 같겠지"로 넘기지 않고 avgTradePrice와 같은 필터(price > 0)를
+ * 실제로 태운다 — 0원 신고가 섞이면 전체 건수와 갈린다.
+ */
+export function countAvgSample(
+  records: DealRecord[],
+  dealType: "매매" | "전세"
+): number {
+  return dealType === "매매"
+    ? (records as TradeRecord[]).filter(isTradeAvgSample).length
+    : (records as RentRecord[]).filter((r) => isJeonseAvgSample(r, true)).length;
 }
 
 export function pctChange(
@@ -261,12 +294,60 @@ export function buildMonthlyStats(
   return stats;
 }
 
+/**
+ * 표본 하한 — 변동률 카드의 강조 표시를 빼는 기준 건수.
+ * 판정식은 `min(현재월 유효건수, 비교월 유효건수) < SAMPLE_FLOOR_N`
+ * (docs/design/sample-floor-disclosure-spec-2026-08-04.md §3-1).
+ *
+ * ✅ **유효건수 기준으로 재측정해 확정한 값이다**(2026-08-04 라운드59 QA,
+ * docs/qa/sample-floor-verification-2026-08-04.md §8). 최초 도입 시엔 잠정값이었다 —
+ * 그때 측정이 `monthly_stats.deal_count`(전체 신고 건수) 기준이라 "유효건수 기준이면 영향
+ * 범위가 더 넓을 것"이라는 미확인 우려가 남아 있었기 때문이다. **그 우려는 N≤10 구간에서
+ * 실현되지 않았다** — N=5와 N=10 모두 두 기준이 잡는 카드 집합이 완전히 동일하다(유효만
+ * 잡히는 카드 0장). 갈라지는 지점은 N=15부터(9장 추가)이고, 이유는 유효/전체 격차가 큰 곳이
+ * 강남 같은 대량 지역이고 소량 지역은 갱신·0원 신고가 드물어 유효≈전체이기 때문이다.
+ *
+ * 실측(유효건수 기준, 분모 = 실제 렌더되는 변동률 카드 **631장**):
+ *   min<5 → 7장(1.1%) · min<10 → 13장(2.1%) · min<15 → 25장(4.0%)
+ *   현재월 미달로 카드 4장이 전부 회색이 되는 조합: N=5에서 3/211(1.4%), N=10에서 5/211(2.4%)
+ *   저표본 7장의 |변동률| 중앙값 30.8% vs 나머지 624장 5.78% (표본이 적을수록 변동률이 큼)
+ *
+ * ⚠️ 분모가 841이 아니라 631인 이유(도입 시 로그의 841은 과대였다): 수집 창이 13개월
+ * (`getYmList(13)` = 당월~12개월 전)이라 `currentYm`이 전월로 잡히는 동안 "1년 대비"의 목표
+ * 달이 창 밖으로 벗어나 **그 카드는 전국에서 `수집 중`이 된다**(아래 getAvgAt 주석의 "알려진
+ * 대가"). 즉 841에는 화면에 뜰 수 없는 카드 210장이 포함돼 있었다. N을 재측정할 때 이 창
+ * 제약을 빼먹으면 분모가 다시 부풀어 비율이 과소평가된다.
+ *
+ * 🔴 N을 15 이상으로 올릴 때는 **반드시 유효건수 기준으로 다시 재라.** 거기서부터 전체건수
+ * 기준 측정이 9장을 놓친다(전세 대량 지역이 유효 기준으로만 문턱 아래로 내려온다).
+ *
+ * 🔴 이 숫자는 저장소에 **여기 한 곳에만** 존재한다. 판정(SummaryCards)과 공시 문구
+ * (disclosures.ts sampleFloorNotice(n))가 같은 상수를 참조하므로, 값을 바꾸면 화면 판정과
+ * 문단의 "{n}건 미만"이 함께 움직인다. 리터럴을 다른 곳에 다시 적지 마라.
+ */
+export const SAMPLE_FLOOR_N = 5;
+
 export interface DealTypeSummary {
   current_ym: string | null;
   current_avg: number | null;
   monthly: Record<string, MonthlyStat>;
   changes: { 전월: number | null; "3개월": number | null; "6개월": number | null; "1년": number | null };
   diffs: { 전월: number | null; "3개월": number | null; "6개월": number | null; "1년": number | null };
+  /**
+   * add-only ①: `current_ym`의 평균가 계산에 실제로 쓰인 거래 건수(countAvgSample).
+   * current_ym이 null이면 null.
+   */
+  sample_current: number | null;
+  /**
+   * add-only ②: 각 카드의 **비교월** 평균가 계산에 실제로 쓰인 거래 건수.
+   * 키는 `changes`/`diffs`와 같고, 같은 달(= getAvgAt과 같은 오프셋 결과)을 가리킨다.
+   * 비교월이 없거나 그 달 avg가 null이면(= 카드가 "수집 중"이면) null.
+   *
+   * 🔴 오프셋 매핑은 buildSummary 안에만 있다. 컴포넌트가 ymMinusMonths로 비교월을 다시
+   * 계산하면 매핑이 두 곳이 되어, 한쪽이 바뀔 때 캡션이 엉뚱한 달의 건수를 말한다
+   * (스펙 §3-4).
+   */
+  sample_compare: { 전월: number | null; "3개월": number | null; "6개월": number | null; "1년": number | null };
 }
 
 export type Summary = Record<"매매" | "전세", DealTypeSummary>;
@@ -277,6 +358,17 @@ export function buildSummary(allData: AllData): Summary {
   for (const dealType of ["매매", "전세"] as const) {
     const monthly = buildMonthlyStats(allData, dealType);
     const sortedYms = Object.keys(monthly).sort().reverse();
+
+    /**
+     * 달별 **유효건수**(= 그 달 평균가에 실제로 쓰인 건수). `monthly[ym].count`(전체 신고
+     * 건수)와 별개의 맵으로 둔다 — 기존 MonthlyStat의 필드는 하나도 건드리지 않는다.
+     * 이 값은 화면에 정보로 덧붙이기만 하며 어떤 집계에도 되먹이지 않는다(AreaStat.new_count와
+     * 같은 add-only 패턴). 평균가·변동률·차액은 이 블록 추가 전후로 완전히 동일하다.
+     */
+    const sampleCounts: Record<string, number> = {};
+    for (const [ym, monthData] of Object.entries(allData)) {
+      sampleCounts[ym] = countAvgSample(monthData[dealType] as DealRecord[], dealType);
+    }
 
     const currentYm =
       sortedYms.find((ym) => monthly[ym].avg !== null) ?? null;
@@ -342,12 +434,33 @@ export function buildSummary(allData: AllData): Summary {
       "1년": priceDiff(12),
     };
 
+    /**
+     * 비교월의 유효건수. **getAvgAt과 같은 달을 본다** — 목표 달을 못 찾거나 그 달 avg가
+     * null이면(= 카드가 "수집 중"이면) null이다. 두 함수의 달 결정 로직이 갈리면 캡션이
+     * 변동률과 다른 달을 말하게 되므로, 수정할 때는 반드시 둘을 함께 고쳐라.
+     */
+    const sampleAt = (offset: number): number | null => {
+      if (currentYm === null) return null;
+      const target = ymMinusMonths(currentYm, offset);
+      if (target === null) return null;
+      const stat = monthly[target];
+      if (!stat || stat.avg === null) return null;
+      return sampleCounts[target] ?? null;
+    };
+
     result[dealType] = {
       current_ym: currentYm,
       current_avg: currentAvg,
       monthly,
       changes,
       diffs,
+      sample_current: currentYm === null ? null : (sampleCounts[currentYm] ?? null),
+      sample_compare: {
+        전월: sampleAt(1),
+        "3개월": sampleAt(3),
+        "6개월": sampleAt(6),
+        "1년": sampleAt(12),
+      },
     };
   }
 
@@ -559,17 +672,15 @@ export function formatPrice(wonMan: number | null): string {
   return `${man.toLocaleString()}만원`;
 }
 
-export function formatChange(
-  pct: number | null,
-  diff: number | null
-): string {
-  if (pct === null) return "데이터 없음";
-  const arrow = pct > 0 ? "▲" : pct < 0 ? "▼" : "━";
-  const sign = pct >= 0 ? "+" : "";
-  let diffStr = "";
-  if (diff !== null) {
-    const diffSign = diff >= 0 ? "+" : "";
-    diffStr = ` (${diffSign}${formatPrice(Math.abs(diff))})`;
-  }
-  return `${arrow} ${sign}${pct}%${diffStr}`;
-}
+/*
+ * formatChange(pct, diff)는 2026-08-04 라운드 56에서 삭제했다.
+ * 저장소 전체(.ts/.tsx, 테스트·스크립트 포함)에 호출자가 0개인 죽은 코드였는데,
+ * 음수 diff의 부호를 붙이지 않는 버그(diffSign = diff >= 0 ? "+" : "" + Math.abs)를
+ * 그대로 품고 있어 다음 사람이 가져다 쓰면 결함이 복제되는 상태였다.
+ * 화면의 변동 표기는 각 컴포넌트가 직접 조립한다(SummaryCards / DealsTable /
+ * ranking/RankingTable · RankingHighlights). 되살릴 일이 생기면 부호를 +/- 대칭으로
+ * 만들고(음수는 ASCII "-"), 금액은 formatPrice(Math.abs(diff))로 넘겨라 —
+ * formatPrice는 음수 입력에서 억 단위가 사라진다.
+ * (docs/design/ranking-board-spec-2026-07-17.md가 이 함수를 재사용 대상으로 적어 두었으나
+ *  실제 랭킹 화면은 인라인으로 구현돼 문서 쪽이 이미 코드와 어긋나 있었다.)
+ */
