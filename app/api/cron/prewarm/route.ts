@@ -44,6 +44,24 @@
 // 안 하고 프리워밍만 스친 지역"에만 남아 있던 이유가 이것이다. 리뷰 기준도 "/api/data와
 // 같은가"로 두면 된다. 이미 생겨버린 724셀의 1회성 복구는 별도 라우트가 맡는다
 // (app/api/admin/backfill-monthly-stats/route.ts, 수동 전용).
+//
+// 2026-08-04 수정 (순수 관측성 — 동작 파라미터·제어 흐름 변경 없음):
+// 지역 루프의 catch가 processed에 아무것도 넣지 않는데 count는 늘고 idx는 전진해서,
+// **실패한 지역이 HTTP 응답에서 완전히 사라지고 있었다.** 실측(2026-08-04 라운드):
+//   • 이번 실행: nextIndex 106 → 112(6칸 전진)인데 processedCount:3. 응답에 남은 것은
+//     울산 남구(31140)·동구(31170)·북구(31200) = 인덱스 109·110·111뿐.
+//     → 인덱스 106 광주 북구(29170) · 107 광주 광산구(29200) · 108 울산 중구(31110)가
+//       조용히 실패했다. 울산 중구는 deals 4,310행을 가진 정상 지역이라 "빈 데이터 탓"도 아니다.
+//   • 직후 대조 실행: nextIndex 112 → 1, processedCount:3(울주군·세종·종로구) — 전진칸수와
+//     processedCount가 정확히 일치. 즉 정상 실행에는 갭이 없고, **갭 = 조용한 실패 건수**다.
+// 파급이 큰 이유: 지역 순회 주기가 114÷3 ≈ 38라운드다. 조용히 실패한 지역은 다음 기회까지
+// 약 38라운드를 기다리는데 그 사이 아무도 실패를 모른다. 이 프로젝트는 이미 "조용한 실패"로
+// 두 번 사고를 겪었다(2026-07-28 monthly_stats 724셀 결측, 2026-08-01 루틴 전면 정지 이틀).
+// 이번 라운드에서 고치는 것은 **관측성뿐**이다 — 광주 북구·광산구·울산 중구가 왜 throw했는지는
+// 아직 모른다(Vercel 함수 로그 접근이 없어 이 라운드에서 판별 불가). 원인을 추측해서 "고치는"
+// 대신, 다음번에 같은 일이 나면 **원인이 응답에 그대로 드러나게** 만드는 것이 이 수정의 목표다.
+// 구체적으로: failed[] 배열 + failedCount/attemptedCount 요약 카운터 + unknown→안전한 문자열
+// 변환(toSafeErrorMessage). 상세 근거는 각 지점 주석에 있다.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { REGION_CODES } from "@/lib/regions";
@@ -110,6 +128,85 @@ function checkAuth(request: NextRequest): boolean {
   if (authHeader === `Bearer ${secret}`) return true;
   const queryKey = request.nextUrl.searchParams.get("secret");
   return queryKey === secret;
+}
+
+// ── 실패를 응답에 싣기 위한 에러 요약 (2026-08-04) ─────────────────────────────────
+// 🔴 시크릿 유출 방어가 이 두 함수의 존재 이유 절반이다.
+//   lib/molit-api.ts:158-166은 serviceKey를 URL 문자열에 **직접 보간**해 fetch한다(이중인코딩
+//   방지 목적, 그 파일 상단 주석 참고). 즉 요청 URL 자체가 시크릿이고, 런타임/라이브러리
+//   버전에 따라 에러 메시지나 cause에 요청 URL이 섞여 나올 수 있다. 이 라우트 응답은
+//   CRON_SECRET 뒤에 있지만, 응답은 로그 수집기·모니터링·스크린샷으로 쉽게 재유통되므로
+//   "인증 뒤라서 괜찮다"에 기대지 않고 값 단위로 마스킹한다.
+//   allowlist가 아니라 denylist인 이유: 응답에 담을 텍스트는 우리가 만든 문자열이 아니라
+//   외부 라이브러리가 만든 문장이라 화이트리스트로 통과시킬 수가 없다. 대신 아래 키 이름이
+//   보이면 그 값을 무조건 지운다 — 새 파라미터가 생겨도 최소한 기존 키는 계속 막힌다.
+const SECRET_PARAM_PATTERN =
+  /((?:serviceKey|apikey|api_key|key|token|secret|password|pwd|authorization|auth)=)[^&\s"']+/gi;
+const BEARER_PATTERN = /(Bearer\s+)[\w.~+/-]+=*/gi;
+// 응답 크기 상한. 스택은 애초에 담지 않지만, undici처럼 message가 길게 늘어지는 경우가 있어
+// 지역 20개분(MAX_REGIONS_PER_RUN)이 전부 실패해도 응답이 감당 가능한 크기로 유지되게 자른다.
+const MAX_ERROR_MESSAGE_LENGTH = 300;
+
+function sanitizeErrorText(text: string): string {
+  const masked = text
+    .replace(SECRET_PARAM_PATTERN, "$1[REDACTED]")
+    .replace(BEARER_PATTERN, "$1[REDACTED]");
+  // 개행/연속 공백을 한 칸으로 접는다 — 응답을 한 줄로 훑어 읽는 용도이고, 여기에 개행이
+  // 남아 있으면 "스택을 담지 않는다"는 규칙이 지켜졌는지 눈으로 판정하기 어려워진다.
+  const collapsed = masked.replace(/\s+/g, " ").trim();
+  return collapsed.length > MAX_ERROR_MESSAGE_LENGTH
+    ? `${collapsed.slice(0, MAX_ERROR_MESSAGE_LENGTH)}…(생략)`
+    : collapsed;
+}
+
+/**
+ * unknown 예외를 응답에 넣어도 되는 한 줄 문자열로 바꾼다(message 수준 요약, 스택 없음).
+ *
+ * 변환 규칙 = 우선순위 순서:
+ *   1) Error → `name: message` (name이 "Error"면 message만). AbortError(타임아웃)와
+ *      TypeError(네트워크)의 구분이 원인 추적에 결정적이라 name을 버리지 않는다.
+ *   2) Error.cause 한 겹만 덧붙인다 — undici fetch 실패는 message가 언제나 "fetch failed"라서
+ *      그것만 담으면 응답에 실패가 보이기만 하고 원인은 여전히 모른다. 실제 원인
+ *      (ETIMEDOUT/ENOTFOUND/ECONNRESET/socket hang up 등)은 cause에 있다. 두 겹 이상은
+ *      따라가지 않는다(길이만 늘고 얻는 정보가 급감).
+ *   3) 문자열, 그리고 `{ message: string }` 모양 객체 → 그 문자열.
+ *      (Supabase PostgrestError가 Error 인스턴스가 아닌 이 모양이다. 이 라우트에서 가장
+ *       흔할 후보라 명시적으로 처리한다. code/details/hint는 담지 않는다 — details에 쿼리
+ *       조각이 실려 오는 경우가 있어 message 수준으로만 요약한다는 원칙을 지킨다.)
+ *   4) 그 외 → `[비Error 예외: <typeof>]`.
+ *      ⚠️ 여기서 String(err)/JSON.stringify(err)를 쓰지 않는 것이 의도다. 저장소 다른 곳의
+ *      `err instanceof Error ? err.message : String(err)` 관례(app/api/admin/*)와 갈리는
+ *      지점인데, 그 라우트들은 수동 전용이고 이 라우트는 시크릿을 보간한 URL로 외부 API를
+ *      때리는 경로다. 정체 불명의 객체를 통째로 문자열화하면 설정값·헤더·URL이 그대로
+ *      응답에 실릴 수 있어, 여기서는 타입 이름만 남기고 버린다(원인 추적에 필요한 실제
+ *      정보는 1~3에서 이미 잡힌다. 4로 떨어졌다는 사실 자체가 조사 단서다).
+ */
+function toSafeErrorMessage(err: unknown): string {
+  const parts: string[] = [];
+  if (err instanceof Error) {
+    parts.push(err.name && err.name !== "Error" ? `${err.name}: ${err.message}` : err.message);
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause instanceof Error) {
+      parts.push(`cause: ${cause.name}: ${cause.message}`);
+    } else if (typeof cause === "string") {
+      parts.push(`cause: ${cause}`);
+    }
+  } else if (typeof err === "string") {
+    parts.push(err);
+  } else if (
+    typeof err === "object" &&
+    err !== null &&
+    typeof (err as { message?: unknown }).message === "string"
+  ) {
+    parts.push((err as { message: string }).message);
+  } else {
+    parts.push(`[비Error 예외: ${typeof err}]`);
+  }
+  // message가 빈 문자열인 Error도 실제로 있다(throw new Error()). 그때 failed[].error가
+  // ""가 되면 "실패는 있는데 아무 말도 없는" 상태가 되어 이 수정의 목적이 반쯤 무너지므로,
+  // 최소한 "빈 메시지였다"는 사실은 남긴다.
+  const joined = parts.filter((part) => part.length > 0).join(" / ");
+  return sanitizeErrorText(joined) || "[빈 에러 메시지]";
 }
 
 /**
@@ -462,7 +559,18 @@ export async function GET(request: NextRequest) {
 
   const regions = buildRegionList();
   if (regions.length === 0) {
-    return NextResponse.json({ ok: true, processedCount: 0, totalRegions: 0, processed: [] });
+    // 2026-08-04: 아래 정상 경로와 응답 모양을 맞춰 failed/failedCount도 함께 낸다.
+    // 소비자가 `failed`를 "없으면 실패 없음"이 아니라 "배열"로 일관되게 읽을 수 있게 하려는
+    // 것이다(undefined와 [] 두 표현이 섞이면 모니터링 쪽에서 갈라진다).
+    return NextResponse.json({
+      ok: true,
+      processedCount: 0,
+      failedCount: 0,
+      attemptedCount: 0,
+      totalRegions: 0,
+      processed: [],
+      failed: [],
+    });
   }
 
   const startTime = Date.now();
@@ -480,6 +588,26 @@ export async function GET(request: NextRequest) {
     // 이 두 값으로 본다(기획안 §5 V6).
     statsGapMonths?: number;
     statsGapSkippedEmpty?: number;
+  }> = [];
+  // ── 2026-08-04: 실패 지역 목록 ────────────────────────────────────────────────
+  // 왜 `processed`에 플래그를 끼우지 않고 **별도 배열**을 택했는가:
+  //   • `processedCount`는 지금까지 `processed.length`로 계산돼 왔고, 운영/QA가 그 값을
+  //     "이번 실행에서 실제로 처리(성공)된 지역 수"로 읽어 왔다. processed에 실패 항목을
+  //     섞으면 그 순간 processedCount의 의미가 "시도 수"로 조용히 바뀐다 —
+  //     **조용한 의미 변경은 이번에 고치려는 버그와 같은 종류의 문제다.** 기존 필드 의미를
+  //     보존하는 쪽이 유일하게 안전한 선택이었다.
+  //   • processed 항목들은 전부 "성공한 지역의 수집 지표"(fetchedMonths/monthsCollected/
+  //     statsGap*)를 갖는다. 실패 항목은 그 지표를 하나도 못 만든다. 한 배열에 넣으면
+  //     모든 필드가 optional이 되어, 소비자가 매 항목마다 "이건 성공인가?"를 먼저 물어야 한다.
+  //   • 실패 지역은 `.filter(...)` 없이 배열째로 바로 눈에 들어와야 한다. 이번 사고의 본질은
+  //     "찾아봐야 보인다"가 아니라 "찾아봐도 없다"였고, 그 반대극은 "안 찾아도 보인다"다.
+  // 담는 값은 지역 식별자(sido/gu/lawdCd) + message 수준 에러 요약뿐이다. lawdCd를 넣는 이유는
+  // 운영자가 실패 지역을 바로 단건 재시도(?/api/data 또는 수동 프리워밍)할 수 있어야 하기 때문.
+  const failed: Array<{
+    sido: string;
+    gu: string;
+    lawdCd: string;
+    error: string;
   }> = [];
   let count = 0;
 
@@ -507,23 +635,74 @@ export async function GET(request: NextRequest) {
       });
     } catch (err) {
       console.error(`[prewarm: 지역 처리 실패] ${region.sido} ${region.gu}`, err);
+      // 2026-08-04: console.error만 남기고 끝냈던 것이 이 버그였다. Vercel 함수 로그는 이
+      // 대시보드의 운영 경로(크론 응답 확인)에서 사실상 열리지 않으므로, 같은 사실을 응답에도
+      // 싣는다. 로그를 지우지 않고 둘 다 남기는 이유는 응답에는 message 수준 요약만 담고
+      // 스택은 로그에만 남겨야 해서다(스택은 시크릿·내부 경로가 섞일 수 있고 응답을 부풀린다).
+      //
+      // 🔴 toSafeErrorMessage 호출을 자체 try/catch로 감싼 이유 (2026-08-04 QA F-4 실측):
+      // 이 함수는 err.name / err.message / err.cause를 **읽는다.** 그 프로퍼티가 접근자
+      // (getter)이고 그 getter가 throw하는 객체를 만나면, 예외가 이 catch를 뚫고 while 루프
+      // 밖으로 나가 라우트 전체가 500이 된다 — 응답이 통째로 사라지므로 **그 실행에서 이미
+      // 성공한 지역들의 processed까지 함께 버려진다.** 관측성을 늘리려는 수정이 관측 대상을
+      // 없애는 것이 되어 취지와 정반대가 된다.
+      // 수정 전(HEAD)에는 이 위험이 없었다. console.error(msg, err)의 util.inspect는 기본적으로
+      // getter를 호출하지 않아 살아남았다(QA가 HEAD와 대조 실측으로 확인). 즉 이건 이번 수정이
+      // 새로 들여온 유일한 동작 변화이므로 여기서 닫는다.
+      // 도달성은 낮다 — undici 에러도 postgrest 에러도 평범한 데이터 프로퍼티다. 그래서 차단
+      // 사유는 아니었지만, 방어 비용이 3줄이고 실패 시 대가가 "응답 소실"이라 값이 맞지 않는다.
+      // 이 폴백이 뜨면 그 자체가 조사 신호다(정상 경로에서는 절대 나오지 않는 문자열).
+      let errorText: string;
+      try {
+        errorText = toSafeErrorMessage(err);
+      } catch {
+        errorText = "[에러 요약 실패: 프로퍼티 접근이 예외를 던졌다]";
+      }
+      failed.push({ ...region, error: errorText });
     }
     count += 1;
     // incomplete(예산 초과로 중간에 끊긴 지역)이면 인덱스를 전진시키지 않는다 — 다음 실행이
     // 같은 지역부터 이어받아 나머지 개월을 마저 채우도록 한다. 어차피 이번 루프는 시간예산도
     // 이미 다 썼을 것이므로(그래서 incomplete가 됐으므로) 곧바로 while 조건에서 빠져나간다.
+    //
+    // ⚠️ 2026-08-04: throw한 지역(위 catch)은 incomplete가 false로 남아 **여기서 그대로
+    // 전진한다 — 이건 버그가 아니라 의도다.** 전진을 막으면 영구 실패 지역 하나(예: 해당
+    // lawdCd에서만 재현되는 외부 API 오류)가 프리워밍 전체를 그 자리에 무한히 인질로 잡고,
+    // 뒤의 지역 100여개가 영원히 갱신되지 않는다. 즉 지역 1개의 실패가 전국 정지로 번진다.
+    // incomplete(시간예산 초과)는 "재시도하면 진전이 있다"는 근거가 있어 붙잡아 두는 것이고,
+    // throw는 그 근거가 없다. 그래서 이번 수정은 흐름을 바꾸지 않고 **실패를 보이게만** 한다.
+    // 대가는 "실패 지역이 다음 순회(약 38라운드 뒤)까지 방치될 수 있다"인데, 그 대가는 코드가
+    // 아니라 응답을 보는 운영자가 failed[]를 보고 수동 재시도로 갚는 것이 맞다.
     if (!incomplete) {
       idx = (idx + 1) % regions.length;
     }
     await saveProgress(supabase, idx);
   }
 
+  // ── 응답 (2026-08-04 관측성 수정) ───────────────────────────────────────────
+  // 필드 순서에 의도가 있다: 운영자가 응답 첫 줄만 보고도 이상을 알아채야 하므로 요약 카운터
+  // 3개를 processed/failed 배열보다 앞에 둔다(JSON.stringify는 객체 리터럴 순서를 보존한다).
+  //
+  // • processedCount = processed.length — **의미 불변**(성공 지역 수). 기존 소비자 그대로.
+  // • failedCount    = 이번 실행에서 throw한 지역 수. 0이 아니면 그 자체로 조사 신호다.
+  // • attemptedCount = 지역 루프가 시도한 횟수(count). 이 값을 굳이 넣는 이유는
+  //   **attemptedCount === processedCount + failedCount** 라는 검산식을 응답 안에서 닫기
+  //   위해서다. 2026-08-04 진단은 nextIndex 전진칸수(106→112)와 processedCount(3)를 손으로
+  //   대조해야 갭 3건이 드러났는데, 그 대조를 운영자 머릿속이 아니라 응답이 하게 만든다.
+  //   (전진칸수 자체를 응답에 넣는 방법도 있었지만, 그 값은 incomplete 지역이 인덱스를 붙잡는
+  //    정상 동작 때문에 시도 수와 원래 어긋날 수 있어 이상 신호로 쓰기에 부적합하다.
+  //    attemptedCount는 그 예외와 무관하게 항상 성립한다.)
+  // • ok는 "라우트가 끝까지 돌았다"는 뜻을 그대로 유지한다 — 부분 실패로 false로 바꾸면
+  //   ok를 헬스체크로 읽는 쪽의 의미가 조용히 바뀐다. 부분 실패의 신호는 failedCount다.
   return NextResponse.json({
     ok: true,
     processedCount: processed.length,
+    failedCount: failed.length,
+    attemptedCount: count,
     nextIndex: idx,
     totalRegions: regions.length,
     elapsedMs: Date.now() - startTime,
     processed,
+    failed,
   });
 }
