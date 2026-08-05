@@ -102,6 +102,10 @@
 
 (숫자는 `aptStatsMaeMae` / `aptStatsJeonse` 행 수)
 
+> 🔴 **2026-08-06(라운드64) 주석 추가 — 이 표의 `0 / 0`은 "거래 0건"이 아니라 "표본 하한을 넘긴 단지 0개"다.**
+> `aptStats*`는 단지 표본 하한 미달 단지를 제외하므로, 거래가 1~2건뿐인 지역은 **행 수가 0이면서 월별 시계열은 nonzero**일 수 있다. 실제로 위 표의 **28260(서구)은 전세 202605=1건(32,000) · 202606=1건(27,000)이 있었는데 이 표에는 `0 / 0`으로 적혔다.** 라운드60·62·63이 3회 연속 같은 사각을 통과했다.
+> → 지역이 "완전히 비었다"를 주장하려면 **행 수가 아니라 `summary.*.monthly`의 nonzero 개월 수 또는 `monthly_stats`를 직접** 봐야 한다. 그리고 **`매매`·`전세` 두 축을 모두** 봐야 한다(28260은 매매만 보면 진짜 0이라 놓친다).
+
 ### 3-3. 판독
 
 - **대조군이 같은 경로·같은 창에서 30/30을 반환한다.** 따라서 0은 "우리 조회가 깨졌다"가 아니라 **국토부가 그 코드로 줄 것이 없다**는 뜻이다.
@@ -132,9 +136,38 @@
 2. **이 문서가 코드의 정본이다.** 다음 라운드가 다시 확보 작업을 반복하지 마라 — §2-1 표를 그대로 쓰면 된다.
 3. **매 라운드 재조회 1줄로 감시한다.** 아래를 돌려 하나라도 0이 아니게 되는 순간이 "(가) 온보딩 지연"이 끝난 시점이고, 그때 §5의 설계 작업을 시작하면 된다.
 
+🔴 **2026-08-06(라운드64) 정정 — 아래 원본 명령은 무효였다. 쓰지 마라.**
+
 ```bash
+# ❌ 무효 — 절대 쓰지 마라 (기록 보존용)
 for c in 28125 28155 28275 28290; do printf "%s " "$c"; curl -s --max-time 90 "https://realestate-hub-6n4n.vercel.app/api/data?lawd_cd=${c}&months=2" | grep -o '"aptStatsMaeMae":\[' | wc -l; done
 ```
+
+`grep -o`는 **키 문자열의 등장 횟수**를 셀 뿐 배열의 행 수를 세지 않는다. 키는 데이터가 0이든 30이든 항상 정확히 한 번 존재하므로 이 명령은 **영구히 `1`만 출력한다.** QA 실측(2026-08-06): 진짜 전부 0인 `28110`도 `1`, 13개월 전 구간 nonzero인 `28125`도 `1`. **0과 nonzero를 원리적으로 구분할 수 없다.**
+
+→ 이 명령을 실제로 돌려 "0/0"을 기록한 라운드가 있다면 **그 기록은 근거가 없다.** (다행히 라운드62·63은 §6-1의 파이썬 명령을 썼고 대조군 게이트도 통과했으므로 그 두 라운드의 측정은 유효하다.)
+
+**유효한 감시 명령은 아래를 써라** — 응답 키(`aptStatsMaeMae`/`aptStatsJeonse`)를 파싱하고 **대조군 28177을 반드시 함께 잰다**:
+
+```bash
+for c in 28125 28155 28275 28290 28177; do printf "%s" $c; curl -s --max-time 90 "https://realestate-hub-6n4n.vercel.app/api/data?lawd_cd=$c&building_type=아파트&months=13" | python -c "
+import sys,json
+raw=sys.stdin.read()
+if not raw.strip(): print('  EMPTY BODY'); raise SystemExit
+d=json.loads(raw)
+m=d.get('aptStatsMaeMae') or []
+mon=(d.get('summary',{}).get('매매',{}) or {}).get('monthly') or {}
+nz=sum(1 for v in mon.values() if (v or {}).get('count'))
+print('  src=%s mae=%d jeonse=%d nonzero_months=%d/%d'%(d.get('source'),len(m),len(d.get('aptStatsJeonse') or []),nz,len(mon)))
+"; done
+```
+
+⚠️ **함정 3개** (①② 는 §6-1, ③은 라운드64 QA 신규):
+1. 응답 키를 `trades`/`jeonse`로 쓰면 조용히 0이 된다. **대조군 28177이 0이면 인천 소식이 아니라 명령이 틀린 것이다.**
+2. Git Bash의 `/tmp` ≠ Windows Python의 `/tmp`. 파일 경유하지 말고 파이프로 넘겨라.
+3. 🆕 **`summary.매매.monthly`는 배열이 아니라 `Record<string,{avg,count}>`다**(`lib/analyzer.ts:330-353`). 배열로 가정한 파서는 길이 0을 보고 **또 조용히 0을 만든다.**
+
+🔴 그리고 **행 수(`mae`/`jeonse`)만 보면 놓치는 자리가 있다** — `aptStats*`는 단지 표본 하한을 넘긴 단지만 담으므로, 거래가 1~2건뿐인 지역은 **행 수 0인데 시계열은 nonzero**다. 실제로 폐지 코드 `28260`이 그 상태였고 라운드60·62·63이 3회 연속 "0 / 0"으로 기록하며 놓쳤다(§3-2 표 주석 참고). **그래서 위 명령에 `nonzero_months`를 넣었다.**
 
 4. **폐지 3개 코드(28110·28140·28260)를 지우지 마라** — 라운드59 §9-1의 경고 그대로 유효하다. 과거 달 거래는 그 코드로 수집돼 있어야 정상이다.
 

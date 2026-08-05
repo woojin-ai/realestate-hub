@@ -45,7 +45,9 @@ export type StatsPresenceIndex = Map<string, Map<string, Map<StatsDealType, Mont
 
 /**
  * lib/regions.ts의 전 지역 법정동 시군구코드를 REGION_CODES 삽입 순서 그대로 평탄화한다.
- * 백필의 "기대집합"(114지역 × 13개월 × 2유형)의 지역 축이 바로 이 목록이다.
+ * 백필의 "기대집합"(115지역 × 13개월 × 2유형 = 2,990셀)의 지역 축이 바로 이 목록이다.
+ * (2026-08-06 인천 행정개편 반영으로 114 → 115. 신설 4개 등재 − 폐지 3개 제거 = 순증 +1.
+ *  계산은 listAllRegionCodes() 결과에서 나오므로 코드 수정은 불필요하고 이 숫자만 갱신했다.)
  * (prewarm route의 buildRegionList는 시/도·구 이름까지 함께 돌려주는 응답 보고용이라
  *  형태가 다르다 — 그쪽을 이 함수로 바꾸는 리팩토링은 이번 범위 밖이라 하지 않는다.)
  */
@@ -157,7 +159,9 @@ export function findMissingStatsMonths(
 /**
  * "매매/전세 중 정확히 한쪽만 존재하는 달" 목록 — 기획안 §1-1의 쌍 대칭 전제를 검증한다.
  * 정상이면 항상 빈 배열이며, 비어 있지 않다면 upsertMonthlyStats 호출부 어딘가가 두 유형을
- * 짝으로 쓰지 않았다는 뜻이므로 백필 스펙의 전제(2,964 = 114×13×2)부터 다시 봐야 한다
+ * 짝으로 쓰지 않았다는 뜻이므로 백필 스펙의 전제(2,990 = 115×13×2)부터 다시 봐야 한다
+ * (2026-07-28 스펙 문서에는 2,964 = 114×13×2로 적혀 있다. 그 문서는 시점 기록이라 고치지 않았고,
+ *  새 정본은 docs/planning/incheon-reorg-activation-2026-08-06.md §5-4다)
  * (QA V0-2의 "대칭이 깨지면 즉시 중단하고 보고"가 이 값을 본다).
  */
 export function findAsymmetricStatsMonths(
