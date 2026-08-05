@@ -24,8 +24,15 @@ export interface RecommendItem {
   subway_score: number; // 0~100
   newbuild_score: number; // 0~100
   score?: number; // 0~100 (서버가 넣어주는 초기값, 이후 클라가 재계산)
-  // ★ 2026-07-15: 4번째 가중치("⛰ 평지") 원점수. 항상 계산·포함되며, 고도 데이터 확보
-  //   실패(원본 규약: 유효 고도 <3개) 시에만 null(카드에서 막대 생략/"측정불가" 표시).
+  // ★ 2026-07-15: 4번째 가중치("⛰ 평지") 원점수. 항상 계산·포함된다.
+  // 🔴 2026-08-06 정정(QA 독립검증) — 옛 주석은 "고도 데이터 확보 실패(유효 고도 <3개) 시에만 null"이라고
+  //   적었으나 **거짓**이다. 사실은 다음 둘로 갈린다:
+  //    · 유효 고도 <3개  → getSlopeScore(이 파일 :349-366, 특히 :360)가 null이 아니라 **50을 반환**한다.
+  //      카드에는 다른 항목과 구별되지 않는 평범한 막대로 그려진다.
+  //    · 단지 좌표 미확인 → app/api/recommend/route.ts:281이 경사 계산 대상에서 제외 → :324에서 null.
+  //      이것이 slope_score가 null이 되는 **유일한 경로**이고, RecommendCard.tsx:104-111이 "측정불가"를 그린다.
+  //   ⚠️ 이 옛 주석이 블로그 2편(ai-recommend-weights-howto / -score-reading-principles)의 오염 발원지였다.
+  //   되돌리지 마라 — 되돌리면 라이브 글 2편이 같은 화면을 정반대로 설명하는 상태로 재발한다.
   slope_score?: number | null;
   // ★ 2026-07-15 추가: "최소 세대수" 필터용 참고값(apt_info 캐시 히트 시에만 채워짐, 미확인 시 null).
   households?: number | null;
