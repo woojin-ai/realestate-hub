@@ -135,12 +135,23 @@ export async function GET(request: NextRequest) {
   // (프로세스 TZ = UTC)에서 돌아가므로 `new Date().getFullYear()`를 쓰면 매년 1월 1일
   // 00:00~09:00 KST에 폴백이 한 해 밀린다. 앱 UI는 AiRecommendSection이 year를 항상
   // 보내 이 폴백에 도달하지 않지만, year 없이 직접 호출하는 API 소비자에게는 적용된다.
+  //
+  // ── 값 범위 방어(2026-08-06) ────────────────────────────────────────────────
+  // 파싱만 통과시키면 음수·1~1979·미래 연도가 그대로 흘러 들어간다. 특히 음수는 아래
+  // 후보 필터의 `newYear > 0` 가드를 거짓으로 만들어 **신축 필터를 통째로 스킵**시키고,
+  // newbuildScore의 `buildYear >= newYear`가 전 단지에서 참이 되어 **신축점수가 전부 100점**이
+  // 된다. 그래서 0 또는 1980~올해(KST)만 채택하고 나머지는 아래 폴백으로 보낸다.
+  // ⚠️ 0을 유효값으로 남기는 이유: newYear===0은 잘못된 입력이 아니라 원본 app.py를 계승한
+  //    "절대연도 모드" 분기다(lib/recommender.ts:129). 폴백으로 밀어내면 API 사양이 바뀐다.
+  const kstYear = getKstYear();
   const yearRaw = sp.get("year");
   const yearParsed = Number(yearRaw);
+  const yearInRange =
+    yearParsed === 0 || (yearParsed >= 1980 && yearParsed <= kstYear);
   const newYear =
-    yearRaw !== null && yearRaw !== "" && Number.isFinite(yearParsed)
+    yearRaw !== null && yearRaw !== "" && Number.isFinite(yearParsed) && yearInRange
       ? yearParsed
-      : getKstYear() - 10;
+      : kstYear - 10;
 
   // 가중치(design default 45/35/20/10, 원본 app.py w_price/w_subway/w_new/w_slope 복원).
   // compositeScore가 합으로 정규화하므로 원시값 그대로 사용.

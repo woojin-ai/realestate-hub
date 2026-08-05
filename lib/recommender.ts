@@ -9,6 +9,7 @@
 //    카카오 키(KAKAO_API_KEY)는 함수 호출 시점에만 process.env로 읽으며 로그/응답에 노출하지 않는다.
 
 import type { AptStat } from "./analyzer";
+import { getKstYear } from "./kst";
 
 // ── 화면 데이터 계약 (design/ai-recommend-section.md §7) ─────────────────────
 export interface RecommendItem {
@@ -121,12 +122,18 @@ export function subwayScore(dist: number): number {
 /**
  * 신축점수 — 원본 app.py 1102~1118 그대로.
  * newYear>0: 기준연도 구간(기준≤ 100 / −5년 70 / −10년 40 / >0 10 / else 0).
- * newYear===0: 절대연도(2026 기준) 구간(−5 100 / −10 80 / −15 60 / −20 40 / −30 20 / >0 10 / else 0).
+ * newYear===0: 절대연도(현재 연도 KST 기준) 구간(−5 100 / −10 80 / −15 60 / −20 40 / −30 20 / >0 10 / else 0).
  */
 export function newbuildScore(buildYearRaw: string, newYear: number): number {
   const buildYear = parseInt(buildYearRaw || "0", 10) || 0;
   if (newYear === 0) {
-    const curYear = 2026; // 원본 app.py 1105: cur_year = 2026
+    // 🔴 2026-08-06: 원본 app.py 1105의 `cur_year = 2026`을 그대로 이관한 하드코딩이었으나
+    //   KST 기준 현재 연도로 교체했다. 리터럴 2026은 이관 시점에 우연히 맞았을 뿐이고,
+    //   그대로 두면 2027-01-01부터 신축 판정이 매년 1년씩 밀린다(시한폭탄).
+    //   ⚠️ 하드코딩으로 되살리지 마라. "원본 계승"은 이 리터럴을 고정할 근거가 아니다.
+    //   (이 함수는 서버 전용 경로에서만 호출된다 — app/api/recommend/route.ts 2곳이 유일한
+    //    호출부이고 클라이언트 컴포넌트는 이 모듈에서 `import type`만 가져간다.)
+    const curYear = getKstYear();
     if (buildYear >= curYear - 5) return 100;
     if (buildYear >= curYear - 10) return 80;
     if (buildYear >= curYear - 15) return 60;

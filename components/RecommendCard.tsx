@@ -34,7 +34,12 @@ function ScoreBar({ label, score, color }: { label: string; score: number; color
 
 export default function RecommendCard({ rank, item, weights, onClick }: RecommendCardProps) {
   // 종합점수는 슬라이더 가중치로 실시간 재계산(서버 재호출 없음, design §3-B).
-  // slope_score가 null(고도 데이터 확보 실패)이면 원본 규약대로 0으로 대입해 계산한다.
+  // slope_score가 null이면 원본 규약대로 0으로 대입해 계산한다.
+  // 🔴 2026-08-06 주석 정정 — 옛 주석의 "고도 데이터 확보 실패"는 **거짓**이었다. 고도 데이터가
+  //   모자란 경우(유효 고도 <3개)는 getSlopeScore(lib/recommender.ts:367)가 null이 아니라
+  //   **50점**을 돌려준다. null이 되는 **유일한 경로**는 **단지 좌표 미확인**이다
+  //   (app/api/recommend/route.ts:292가 좌표 있는 단지만 계산 → :335에서 null).
+  //   자세한 근거는 lib/recommender.ts:29-36의 정정 주석 참고. 동작(?? 0)은 그대로다.
   const slopeRaw = item.slope_score ?? 0;
   const wsum = weights.price + weights.subway + weights.new + weights.slope;
   const total =
@@ -53,9 +58,17 @@ export default function RecommendCard({ rank, item, weights, onClick }: Recommen
   const meta = [item.build_year ? `${item.build_year}년 준공` : "", item.dong]
     .filter(Boolean)
     .join(" · ");
+  // 역명 없이 거리만 있는 행이 실제로 가능하다 — app/api/recommend/route.ts:233-234가 apt_geo의
+  // subway_name과 subway_dist를 각각 **독립적으로** 폴백(`?? "-"` / `?? 9999`)하기 때문이다.
+  // 예전에는 거리만 보고 역명을 그대로 찍어 `🚇 - · 도보 320m`이 노출됐다. 이제 역명이 없으면
+  // 역명 자리만 빼고 실제 데이터인 거리는 살린다.
+  const subwayName = (item.subway_name ?? "").trim();
+  const hasSubwayName = subwayName !== "" && subwayName !== "-";
   const subwayText =
     item.subway_dist < 9999
-      ? `🚇 ${item.subway_name} · 도보 ${item.subway_dist}m`
+      ? hasSubwayName
+        ? `🚇 ${subwayName} · 도보 ${item.subway_dist}m`
+        : `🚇 도보 ${item.subway_dist}m`
       : "🚇 도보 미확인";
 
   return (
