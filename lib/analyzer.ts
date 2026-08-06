@@ -278,6 +278,32 @@ export interface MonthlyStat {
   count: number;
 }
 
+/**
+ * 월별 집계(요약 카드·추이 그래프의 원천).
+ *
+ * ⚠️ **"무필터"가 아니다.** 라운드69 QA가 잡은 라이브 거짓 문안(FAIL-1)의 발원지가
+ * 정확히 이 함수를 "신고된 거래를 그대로 모은다"로 읽은 오독이었다. 실제로는:
+ *
+ *  ① **건물 단위 필터는 없다** — `isRealApartment`(:143) 호출이 이 함수와 그 전이폐포
+ *     (`avgTradePrice` :216 / `avgJeonseDeposit` :235)에 **0건**이다. 목록 표는
+ *     이름 게이트를 거치는데 여기는 안 거치므로, 카드·그래프와 목록 표는 **서로 다른
+ *     건물 집합**에서 나온다. 이 비대칭은 의도된 것이다.
+ *  ② 🔴 **그러나 레코드 단위 필터는 있다** — 평균값 쪽에만.
+ *     · 매매: `isTradeAvgSample`(:214)가 `price > 0`만 평균에 넣는다.
+ *     · 전세: `isJeonseAvgSample`(:224-227)가 `deposit > 0`을 걸러내고, `onlyNew`
+ *       기본값이 `true`(:237)라 **`contract_type === "갱신"`을 평균에서 제외**한다.
+ *       (이 갱신 제외는 화면에도 공시돼 있다 — `JEONSE_POPULATION_NOTICE_SUMMARY`.)
+ *
+ * 🔴 그래서 같은 `MonthlyStat` 안에서도 **`avg`와 `count`의 모집단이 다르다.**
+ *    `count`는 `records.length`(:318)로 **거르지 않은 전체 건수**이고, `avg`는 위
+ *    ②의 필터를 통과한 부분집합에서만 나온다. `count`를 "평균에 쓰인 표본 수"로
+ *    읽으면 틀린다 — 그 값이 필요하면 `countAvgSample`(:257, 주석 :246-255)을 써라.
+ *    그 주석이 이미 경고하듯 `MonthlyStat.count` / `countAvgSample` / 전세
+ *    `countNewContracts` 셋은 서로 다른 값이다.
+ *
+ * 블로그 본문에 이 함수의 동작을 쓸 때는 "그대로 / 전부 / 빠짐없이" 류의 전칭 긍정을
+ * 쓰지 마라(의미 게이트 M5). ①만 보고 "필터가 없다"고 쓰면 ②에서 거짓이 된다.
+ */
 export function buildMonthlyStats(
   allData: AllData,
   dealType: "매매" | "전세"

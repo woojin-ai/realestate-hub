@@ -387,9 +387,19 @@ export const blogPosts: BlogPost[] = [
         type: "heading",
         text: "색과 화살표가 뜻하는 것 — 빨강 ▲ 상승, 파랑 ▼ 하락",
       },
+      // 🔴 되돌림 금지 (2026-08-07 라운드70 정정) — 원문은 이 문단을 "색만 봐도 방향을 빠르게
+      //    구분할 수 있습니다"로 닫았다. 08-04 표본 하한 배포로 **거짓이 됐다**:
+      //    components/SummaryCards.tsx:83이 저표본 카드를 `text-gray-600`으로 렌더하면서
+      //    :66의 화살표(▲/▼)와 부호는 **그대로 유지**한다(:75-80 주석이 그 의도를 명시).
+      //    즉 화면에 **상승인데 회색인 카드**가 존재하므로 "색만 봐도 방향을 안다"는 거짓이고,
+      //    위 색 범례를 전수 대응표로 읽으면 그 카드는 "보합"으로 오독된다.
+      //    화살표는 저표본에서도 방향을 보존하므로 화살표 쪽으로 지시 대상을 옮겼다.
+      // ⚠️ 저표본 회색 표시 자체를 본문에서 설명하지 마라 — 라운드69 마스터 판정으로
+      //    "본문 0문장"이 확정된 사안이다(노출률 1.1%, analyzer.ts:336-338). 여기서 하는 일은
+      //    설명 추가가 아니라 **과잉 단정 제거**다(라운드69 §4-3과 같은 해법).
       {
         type: "paragraph",
-        text: "변동률 카드의 숫자는 방향에 따라 색과 기호가 달라집니다. 값이 오른 경우 빨간색과 위쪽 화살표(▲), 내린 경우 파란색과 아래쪽 화살표(▼), 변동이 없으면 회색과 가로 막대(━)로 표시됩니다. 국내 시세 표기에서 흔히 쓰는 방식(오름세는 빨강, 내림세는 파랑)을 그대로 따른 것으로, 색만 봐도 방향을 빠르게 구분할 수 있습니다. 같은 규칙이 아파트 목록 표의 '직전 거래월 대비' 배지에도 동일하게 적용됩니다.",
+        text: "변동률 카드의 숫자는 방향에 따라 색과 기호가 달라집니다. 값이 오른 경우 빨간색과 위쪽 화살표(▲), 내린 경우 파란색과 아래쪽 화살표(▼), 변동이 없으면 회색과 가로 막대(━)로 표시됩니다. 국내 시세 표기에서 흔히 쓰는 방식(오름세는 빨강, 내림세는 파랑)을 그대로 따른 것입니다. 다만 방향을 확인할 때는 색보다 숫자 앞의 화살표를 보는 편이 확실합니다 — 화살표는 어느 카드에서나 그 카드가 오른 값인지 내린 값인지를 그대로 나타냅니다. 같은 규칙이 아파트 목록 표의 '직전 거래월 대비' 배지에도 동일하게 적용됩니다.",
       },
       {
         type: "heading",
@@ -1641,18 +1651,19 @@ export const blogPosts: BlogPost[] = [
     //      F-3 괄호에 **기간**이 적히는 건 목록 표 열 이름뿐이다. 변동률 카드는 `{label} 대비`라 괄호가 없고,
     //          현재 평균가 카드의 괄호 안은 기간이 아니라 **달**이다(SummaryCards.tsx:41·:77-81).
     //
-    // 본문이 서술하는 계산 규칙의 근거(줄번호는 2026-08-04 라운드56 기준으로 재확인.
-    // lib/analyzer.ts·lib/ranking.ts가 그 라운드에 편집돼 08-01자 줄번호가 전부 밀려 있었다):
+    // 본문이 서술하는 계산 규칙의 근거(줄번호는 **2026-08-07 라운드70 기준**으로 재확인.
+    // 라운드56 기준으로 적혀 있던 lib/analyzer.ts 포인터 6개가 그 사이 편집으로 전부 죽어 있었고,
+    // 라운드70이 buildMonthlyStats에 주석을 넣으며 다시 +26 밀려서 이번에 일괄 갱신했다):
     //  - 열 라벨: components/DealsTable.tsx:26-33(COLUMNS)·:85-88(avgLabel)·:118(avg_price 열은 avgLabel로 렌더)
-    //  - 평균 3개 달 vs 건수 전체: lib/analyzer.ts:426-430(recentYms/recent) vs :522(count: records.length)
-    //  - 직전 거래월 대비: lib/analyzer.ts:443-456(recentYms[0] vs recentYms[1])
-    //  - 카드 계산: lib/analyzer.ts:318-324(getAvgAt — currentYm 앵커, 폴백 없음),
+    //  - 평균 3개 달 vs 건수 전체: lib/analyzer.ts:565-569(recentYms/recent) vs :661(count: records.length)
+    //  - 직전 거래월 대비: lib/analyzer.ts:582-583(recentYms[0] vs recentYms[1])
+    //  - 카드 계산: lib/analyzer.ts:436-442(getAvgAt — currentYm 앵커, 폴백 없음),
     //    카드 라벨: components/SummaryCards.tsx:15-16·:41-43(`{label} 대비` / '수집 중'이 실제 출력 문자열)
-    //  - 기준월(괄호): lib/analyzer.ts:281-283, components/SummaryCards.tsx:64-66·:77-81
+    //  - 기준월(괄호): lib/analyzer.ts:399-401(currentYm), components/SummaryCards.tsx:64-66·:77-81
     //  - 랭킹도 폴백 없음: lib/ranking.ts:78-97(직전 달 행이 없으면 변화율을 비운다).
     //    ⚠️ 라운드56 전에는 대시보드 카드에만 폴백이 있어 두 화면의 규칙이 **달랐고**, 원칙 5가 그 차이를
     //    서술한다. 지금은 두 화면이 같은 규칙이라 원칙 5의 전제가 깨졌다(미해결 — 기획 판단 대기).
-    //  - 단지 상세 두 기간·평수별 표: components/AptDetailModal.tsx:326-337, lib/analyzer.ts:459-467(areaBuckets가 records 순회)
+    //  - 단지 상세 두 기간·평수별 표: components/AptDetailModal.tsx:326-337, lib/analyzer.ts:598-608(areaBuckets가 records 순회)
     slug: "aggregation-period-reading-principles",
     title:
       "'전월 대비'는 정말 지난달과 비교한 값일까 — 실거래가 통계의 집계 기간을 오해 없이 읽는 원칙",
@@ -1874,7 +1885,7 @@ export const blogPosts: BlogPost[] = [
     //
     // 🔴 [9]·[15]·[18]-3의 "계약된"을 "신고된"으로 되돌리지 말 것 (08-01 QA F-1 재발 방지).
     //    월 버킷 기준이 계약 연월이다 — lib/molit-api.ts:277·395(dealYear/dealMonth 파싱)로 year/month가 정해지고
-    //    lib/analyzer.ts:259 `count: records.length`가 그 버킷의 건수를 센다. "신고된"은 신고일 기준이라 거짓이 된다.
+    //    lib/analyzer.ts:318 `count: records.length`가 그 버킷의 건수를 센다. "신고된"은 신고일 기준이라 거짓이 된다.
     //
     // 내부링크는 정확히 3곳, 각 1회, 제목으로만 지칭하고 그 글 내용을 재서술하지 않는다(기획안 §5-5):
     //    [7] molit-system-vs-dashboard-guide / [11] regional-price-difference-reading-principles /
@@ -2055,7 +2066,7 @@ export const blogPosts: BlogPost[] = [
     // guide 5편째. 숫자 0개로 쓴 정의 편 — 본문의 사실 주장 근거:
     //   lib/molit-api.ts:385(월차임 0 → 전세) · :368-377(국토부 응답값 그대로)
     //   :433-437, :460-463(월세도 수집·보관) · lib/db-cache.ts:227, :314(월세 행 저장/복원)
-    //   lib/analyzer.ts:283, :358(집계는 "매매"|"전세"뿐) · lib/types.ts:8(DealType에 월세 없음)
+    //   lib/analyzer.ts:309, :384(집계는 "매매"|"전세"뿐) · lib/types.ts:8(DealType에 월세 없음)
     //   components/DealTypeTabs.tsx:10(탭 2개) · app/api/data/route.ts:263-270(응답에 월세 없음)
     // ⚠️ 되살리지 말 것: ① 임대차 신고 대상 요건(보증금/월차임 기준액) — G4가 다룬다.
     //   ② 신규·갱신 구분의 내용 — G4로 링크만 건다. ③ 보증금 금액대별 반전세 기준 —
@@ -2744,7 +2755,7 @@ export const blogPosts: BlogPost[] = [
     //      — 기존 20편 무수정, 이 라운드는 순수 append다 / (5) 원칙 5개 유지 / (6) summary 1안.
     //
     // 본문이 서술하는 집계 규칙의 근거(2026-08-06 개발팀 원문 재확인):
-    //  - 상위 컷: lib/analyzer.ts:647-648(count 내림차순 정렬 후 slice), 기본값 topN은 :516.
+    //  - 상위 컷: lib/analyzer.ts:673-674(count 내림차순 정렬 후 slice), 기본값 topN은 :542.
     //    대시보드는 app/api/data/route.ts:268-269에서 3번째 인자 없이 부른다(추천 경로는 다른 값을 넘긴다).
     //  - 화면에 잘림 공시 없음: components/DealsTable.tsx:26-33(열 정의)·:96-104(표 머리) 모두 부재.
     //    표 위 고지는 전세 탭 전용 JEONSE_POPULATION_NOTICE_TABLE 하나뿐이다.
